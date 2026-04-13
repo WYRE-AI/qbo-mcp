@@ -9,6 +9,8 @@
  * All requests include minorversion=73 query parameter.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
+
 const QBO_API_BASE = "https://quickbooks.api.intuit.com/v3/company";
 const MINOR_VERSION = "73";
 const MAX_PAGE_SIZE = 1000;
@@ -153,18 +155,38 @@ class QboClient {
 }
 
 /**
- * Singleton client instance (lazy-loaded)
+ * Per-request credential overrides via AsyncLocalStorage.
+ * In gateway mode the HTTP handler sets this so that concurrent requests
+ * never share or overwrite each other's credentials through process.env.
+ */
+export interface QboCredentials {
+  accessToken: string;
+  realmId: string;
+}
+
+export const credentialStore = new AsyncLocalStorage<QboCredentials>();
+
+/**
+ * Singleton client instance (lazy-loaded, used only in stdio/env mode)
  */
 let _client: QboClient | null = null;
 
 /**
  * Get or create the QBO client instance.
- * Uses lazy loading to defer instantiation until first use.
+ * In gateway mode (AsyncLocalStorage has credentials), creates a fresh client per request.
+ * In stdio/env mode, uses a lazy-loaded singleton.
  *
- * @throws Error if QBO_ACCESS_TOKEN or QBO_REALM_ID environment variables are not set
+ * @throws Error if credentials are not available
  * @returns The QboClient instance
  */
 export function getClient(): QboClient {
+  // Prefer per-request credentials from AsyncLocalStorage (gateway mode)
+  const override = credentialStore.getStore();
+  if (override) {
+    return new QboClient({ accessToken: override.accessToken, realmId: override.realmId });
+  }
+
+  // Stdio / env mode: use singleton
   if (!_client) {
     const accessToken = process.env.QBO_ACCESS_TOKEN;
     const realmId = process.env.QBO_REALM_ID;
@@ -183,7 +205,7 @@ export function getClient(): QboClient {
 
 /**
  * Reset the client instance.
- * Used in gateway mode to pick up new credentials from headers.
+ * Used in tests or when env-mode credentials change.
  */
 export function resetClient(): void {
   _client = null;
