@@ -1,0 +1,77 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.wyre-technology/qbo-mcp",
+  "title": "QuickBooks Online",
+  "description": "MCP server for QuickBooks Online — accounts, customers, invoices, bills, and reports.",
+  "repository": {
+    "url": "https://github.com/wyre-technology/qbo-mcp",
+    "source": "github"
+  },
+  "version": "0.0.0",
+  "websiteUrl": "https://github.com/wyre-technology/qbo-mcp",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/wyre-technology/qbo-mcp:0.0.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "QBO_CLIENT_ID",
+          "description": "QuickBooks Online OAuth2 client ID from the Intuit developer app",
+          "isRequired": true,
+          "format": "string"
+        },
+        {
+          "name": "QBO_CLIENT_SECRET",
+          "description": "QuickBooks Online OAuth2 client secret",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "QBO_REFRESH_TOKEN",
+          "description": "OAuth2 refresh token for the connected QuickBooks company",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "QBO_REALM_ID",
+          "description": "QuickBooks Online company (realm) ID",
+          "isRequired": true,
+          "format": "string"
+        },
+        {
+          "name": "QBO_ENVIRONMENT",
+          "description": "QuickBooks API environment: 'sandbox' or 'production'",
+          "isRequired": false,
+          "default": "production",
+          "format": "string"
+        },
+        {
+          "name": "MCP_TRANSPORT",
+          "description": "Transport mode for the server. Set to 'stdio' for local CLI use; the image defaults to 'http' for gateway hosting.",
+          "isRequired": false,
+          "default": "stdio",
+          "format": "string"
+        },
+        {
+          "name": "AUTH_MODE",
+          "description": "Credential source: 'env' reads vars locally, 'gateway' expects header injection from the WYRE MCP Gateway.",
+          "isRequired": false,
+          "default": "env",
+          "format": "string"
+        },
+        {
+          "name": "LOG_LEVEL",
+          "description": "Log verbosity: debug, info, warn, error",
+          "isRequired": false,
+          "default": "info",
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}
