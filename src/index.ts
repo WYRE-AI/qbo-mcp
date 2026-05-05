@@ -3,8 +3,10 @@
  * QuickBooks Online MCP Server
  *
  * This MCP server provides tools for interacting with the QuickBooks Online API.
- * It implements a decision tree architecture where tools are dynamically
- * loaded based on the selected domain.
+ * All tools are listed upfront so they work with every MCP client, including
+ * remote connectors (claude.ai, mcp-remote) that do not support dynamic
+ * tool-list changes. A helper `qbo_navigate` tool provides domain
+ * discovery and guidance.
  *
  * Supports both stdio and HTTP (StreamableHTTP) transports.
  * Authentication: Set QBO_ACCESS_TOKEN and QBO_REALM_ID environment variables (env mode)
@@ -65,15 +67,14 @@ const domainDescriptions: Record<Domain, string> = {
 };
 
 /**
- * Server state management
+ * Map from domain name to its tool definitions (loaded lazily)
  */
-interface ServerState {
-  currentDomain: Domain | null;
-}
+const domainToolMap = new Map<Domain, Tool[]>();
 
-const state: ServerState = {
-  currentDomain: null,
-};
+/**
+ * All domain tools, collected once at startup
+ */
+let allDomainTools: Tool[] | null = null;
 
 /**
  * Get tools for a specific domain
@@ -94,12 +95,40 @@ function getDomainTools(domain: Domain): Tool[] {
 }
 
 /**
- * Navigation tool - entry point for decision tree
+ * Load all domain tools (lazy-loaded on first access)
+ */
+async function getAllDomainTools(): Promise<Tool[]> {
+  if (allDomainTools !== null) {
+    return allDomainTools;
+  }
+
+  const domains: Domain[] = ["customers", "invoices", "expenses", "payments", "reports"];
+  const tools: Tool[] = [];
+
+  for (const domain of domains) {
+    if (!domainToolMap.has(domain)) {
+      const domainTools = getDomainTools(domain);
+      domainToolMap.set(domain, domainTools);
+    }
+    tools.push(...domainToolMap.get(domain)!);
+  }
+
+  allDomainTools = tools;
+  return tools;
+}
+
+/**
+ * Navigation / discovery tool - helps the LLM find the right tools
+ *
+ * This is a stateless helper that describes available tools for a domain.
+ * All domain tools are always listed in tools/list regardless of navigation
+ * state, because many MCP clients (claude.ai connectors, mcp-remote) only
+ * fetch the tool list once and do not support notifications/tools/list_changed.
  */
 const navigateTool: Tool = {
   name: "qbo_navigate",
   description:
-    "Navigate to a specific domain in QuickBooks Online. Call this first to select which area you want to work with. After navigation, domain-specific tools will be available.",
+    "Discover available QuickBooks Online tools by domain. Returns tool names and descriptions for the selected domain. All tools are callable at any time — this is a help/discovery aid, not a prerequisite.",
   inputSchema: {
     type: "object",
     properties: {
@@ -112,7 +141,7 @@ const navigateTool: Tool = {
           "payments",
           "reports",
         ],
-        description: `The domain to navigate to:
+        description: `The domain to explore:
 - customers: ${domainDescriptions.customers}
 - invoices: ${domainDescriptions.invoices}
 - expenses: ${domainDescriptions.expenses}
@@ -125,12 +154,11 @@ const navigateTool: Tool = {
 };
 
 /**
- * Back navigation tool - return to domain selection
+ * Status tool - shows credentials status and available domains
  */
-const backTool: Tool = {
-  name: "qbo_back",
-  description:
-    "Return to domain selection. Use this to switch to a different area of QuickBooks Online.",
+const statusTool: Tool = {
+  name: "qbo_status",
+  description: "Show credentials status and available domains",
   inputSchema: {
     type: "object",
     properties: {},
@@ -155,21 +183,11 @@ const server = new Server(
 setServerRef(server);
 
 /**
- * Handle ListTools requests - returns tools based on current state
+ * Handle ListTools requests - always returns ALL tools
  */
 server.setRequestHandler(ListToolsRequestSchema, async () => {
-  const tools: Tool[] = [];
-
-  if (state.currentDomain === null) {
-    // At root - show navigation tool only
-    tools.push(navigateTool);
-  } else {
-    // In a domain - show domain tools plus back navigation
-    tools.push(backTool);
-    tools.push(...getDomainTools(state.currentDomain));
-  }
-
-  return { tools };
+  const domainTools = await getAllDomainTools();
+  return { tools: [navigateTool, statusTool, ...domainTools] };
 });
 
 /**
@@ -179,32 +197,49 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   try {
-    // Handle navigation
+    // Handle navigation / discovery helper
     if (name === "qbo_navigate") {
       const { domain } = args as { domain: Domain };
-      state.currentDomain = domain;
+
+      if (!["customers", "invoices", "expenses", "payments", "reports"].includes(domain)) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Invalid domain: ${domain}. Available domains: customers, invoices, expenses, payments, reports`,
+            },
+          ],
+          isError: true,
+        };
+      }
 
       const domainTools = getDomainTools(domain);
-      const toolNames = domainTools.map((t) => t.name).join(", ");
+      const toolSummary = domainTools
+        .map((t) => `- ${t.name}: ${t.description}`)
+        .join("\n");
 
       return {
         content: [
           {
             type: "text",
-            text: `Navigated to ${domain} domain. Available tools: ${toolNames}`,
+            text: `${domainDescriptions[domain]}\n\nAvailable tools:\n${toolSummary}\n\nYou can call any of these tools directly.`,
           },
         ],
       };
     }
 
-    // Handle back navigation
-    if (name === "qbo_back") {
-      state.currentDomain = null;
+    if (name === "qbo_status") {
+      const accessToken = process.env.QBO_ACCESS_TOKEN;
+      const realmId = process.env.QBO_REALM_ID;
+      const credStatus = (accessToken && realmId)
+        ? `Configured (realm: ${realmId})`
+        : "NOT CONFIGURED - Please set environment variables";
+
       return {
         content: [
           {
             type: "text",
-            text: "Returned to domain selection. Use qbo_navigate to select a domain: customers, invoices, expenses, payments, reports",
+            text: `QuickBooks Online MCP Server Status\n\nCredentials: ${credStatus}\nAvailable domains: customers, invoices, expenses, payments, reports\n\nAll tools are available at all times. Use qbo_navigate to discover tools by domain.`,
           },
         ],
       };
@@ -234,7 +269,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       content: [
         {
           type: "text",
-          text: `Unknown tool: ${name}. Use qbo_navigate to select a domain first.`,
+          text: `Unknown tool: ${name}. Use qbo_navigate to discover available tools by domain.`,
         },
       ],
       isError: true,
