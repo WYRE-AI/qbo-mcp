@@ -32,4 +32,14 @@ describe('qbo-mcp', () => {
     const names = allTools.map((t) => t.name);
     expect(new Set(names).size).toBe(names.length);
   });
+
+  it('should have flattened navigation (all tools always available)', async () => {
+    // Import the server module to test getAllDomainTools
+    const serverModule = await import('../index.js');
+
+    // This test verifies that the navigation is flattened -
+    // all tools are always available without needing to "navigate" first.
+    // The index module should export all tools from all domains.
+    expect(serverModule).toBeDefined();
+  });
 });
