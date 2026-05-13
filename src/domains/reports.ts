@@ -5,6 +5,15 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { getClient } from "../utils/client.js";
 
+/** Tool name → QBO report endpoint name for reports sharing the
+ * start_date / end_date / accounting_method shape. */
+const datedReportEndpoints: Record<string, string> = {
+  qbo_reports_cash_flow: "CashFlow",
+  qbo_reports_trial_balance: "TrialBalance",
+  qbo_reports_general_ledger: "GeneralLedger",
+  qbo_reports_vendor_expenses: "VendorExpenses",
+};
+
 /**
  * Report domain tool definitions
  */
@@ -284,13 +293,7 @@ export async function handleReportTool(
       };
       const params: Record<string, string> = { start_date, end_date };
       if (accounting_method) params.accounting_method = accounting_method;
-      const reportNameMap: Record<string, string> = {
-        qbo_reports_cash_flow: "CashFlow",
-        qbo_reports_trial_balance: "TrialBalance",
-        qbo_reports_general_ledger: "GeneralLedger",
-        qbo_reports_vendor_expenses: "VendorExpenses",
-      };
-      const report = await client.get(`reports/${reportNameMap[name]}`, params);
+      const report = await client.get(`reports/${datedReportEndpoints[name]}`, params);
       return {
         content: [{ type: "text", text: JSON.stringify(report, null, 2) }],
       };
