@@ -3,6 +3,7 @@ import {
   assertDate,
   assertPositiveInt,
   buildDatedListSql,
+  escapeQboLike,
   escapeQboString,
 } from "../utils/qbo-sql.js";
 import { parseEnvironment } from "../utils/client.js";
@@ -28,6 +29,20 @@ describe("escapeQboString", () => {
     const sql = `WHERE DisplayName LIKE '%${safe}%'`;
     // The closing quote of OR '1'='1 is now doubled and stays inside the literal.
     expect(sql).toBe("WHERE DisplayName LIKE '%x%'' OR ''1''=''1%'");
+  });
+});
+
+describe("escapeQboLike", () => {
+  it("escapes %, _, and backslash so search terms match literally", () => {
+    expect(escapeQboLike("50%")).toBe("50\\%");
+    expect(escapeQboLike("foo_bar")).toBe("foo\\_bar");
+    expect(escapeQboLike("a\\b")).toBe("a\\\\b");
+    expect(escapeQboLike("plain")).toBe("plain");
+  });
+
+  it("composes safely with escapeQboString for SQL string literals", () => {
+    const term = escapeQboString(escapeQboLike("O'Brien_50%"));
+    expect(term).toBe("O''Brien\\_50\\%");
   });
 });
 

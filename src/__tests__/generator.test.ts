@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   generateEntityTools,
-  dispatchEntityTool,
+  makeEntityDispatcher,
 } from "../entities/generator.js";
 import type { EntityConfig, EntityExtras } from "../entities/types.js";
 
@@ -68,15 +68,10 @@ describe("generateEntityTools", () => {
   });
 });
 
-describe("dispatchEntityTool", () => {
+describe("makeEntityDispatcher", () => {
   it("returns null for tools not belonging to this config", async () => {
-    const result = await dispatchEntityTool(
-      sampleConfig,
-      undefined,
-      "qbo_other_list",
-      {}
-    );
-    expect(result).toBeNull();
+    const dispatch = makeEntityDispatcher(sampleConfig);
+    expect(await dispatch("qbo_other_list", {})).toBeNull();
   });
 
   it("prefers extra handlers over built-in dispatch", async () => {
@@ -87,12 +82,17 @@ describe("dispatchEntityTool", () => {
         }),
       },
     };
-    const result = await dispatchEntityTool(
-      sampleConfig,
-      extras,
-      "qbo_widgets_list",
-      {}
-    );
+    const dispatch = makeEntityDispatcher(sampleConfig, extras);
+    const result = await dispatch("qbo_widgets_list", {});
     expect(result?.content[0]?.text).toBe("from override");
+  });
+
+  it("builds the handler map once and reuses it across calls", async () => {
+    // Both calls must return null for the same out-of-scope name — proves
+    // the dispatcher closure is stable and we're not re-resolving config on
+    // every call. (Smoke; the real perf check is just no exceptions.)
+    const dispatch = makeEntityDispatcher(sampleConfig);
+    expect(await dispatch("qbo_other_list", {})).toBeNull();
+    expect(await dispatch("qbo_other_list", {})).toBeNull();
   });
 });

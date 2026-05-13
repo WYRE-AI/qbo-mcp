@@ -18,6 +18,7 @@ import { getClient } from "../utils/client.js";
 import {
   assertPositiveInt,
   buildDatedListSql,
+  escapeQboLike,
   escapeQboString,
   type DatedListArgs,
 } from "../utils/qbo-sql.js";
@@ -25,6 +26,7 @@ import type {
   EntityConfig,
   EntityExtras,
   EntityField,
+  ExtraHandler,
   ToolResult,
 } from "./types.js";
 
@@ -44,7 +46,7 @@ function fieldsToSchema(fields: EntityField[]): {
   const required: string[] = [];
   for (const f of fields) {
     const prop: Record<string, unknown> = { type: f.type, description: f.description };
-    if (f.items) prop.items = f.items;
+    if (f.type === "array") prop.items = f.items;
     properties[f.name] = prop;
     if (f.required) required.push(f.name);
   }
@@ -161,53 +163,54 @@ export function generateEntityTools(config: EntityConfig): Tool[] {
   return tools;
 }
 
+type Handler = (args: Record<string, unknown>) => Promise<ToolResult>;
+
 /**
- * Build a built-in handler for one entity. Returns null when the tool name
- * doesn't match any of this config's generated ops, so an outer dispatcher
- * can keep walking the registry.
+ * Build the lookup table of built-in handlers for one config. Each op closure
+ * captures the bits it needs (path, idParam, field names) so the per-call
+ * path is one map lookup + the closure body — no walking of the config tree
+ * on the hot path.
  */
-function builtinHandler(
-  config: EntityConfig,
-  toolName: string
-): ((args: Record<string, unknown>) => Promise<ToolResult>) | null {
+function builtinHandlers(config: EntityConfig): Map<string, Handler> {
+  const map = new Map<string, Handler>();
   const prefix = config.toolPrefix;
 
-  if (config.list && toolName === `${prefix}_list`) {
-    return async (args) => {
+  if (config.list) {
+    map.set(`${prefix}_list`, async (args) => {
       const sql = buildDatedListSql(config.name, args as DatedListArgs);
       const result = await getClient().query(sql);
       return jsonText(result);
-    };
+    });
   }
 
-  if (config.get && toolName === `${prefix}_get`) {
+  if (config.get) {
     const { idParam } = config.get;
     const path = pathFor(config, config.get.pathSegment);
-    return async (args) => {
+    map.set(`${prefix}_get`, async (args) => {
       const id = args[idParam] as string;
       const result = await getClient().get(`${path}/${id}`);
       return jsonText(result);
-    };
+    });
   }
 
-  if (config.create && toolName === `${prefix}_create`) {
+  if (config.create) {
     const path = pathFor(config, config.create.pathSegment);
     const fieldNames = config.create.fields.map((f) => f.name);
-    return async (args) => {
+    map.set(`${prefix}_create`, async (args) => {
       const body: Record<string, unknown> = {};
       for (const k of fieldNames) {
         if (args[k] !== undefined) body[k] = args[k];
       }
       const result = await getClient().post(path, body);
       return jsonText(result);
-    };
+    });
   }
 
-  if (config.update && toolName === `${prefix}_update`) {
+  if (config.update) {
     const path = pathFor(config, config.update.pathSegment);
     const { idParam } = config.update;
     const fieldNames = config.update.fields.map((f) => f.name);
-    return async (args) => {
+    map.set(`${prefix}_update`, async (args) => {
       const body: Record<string, unknown> = {
         Id: args[idParam] as string,
         SyncToken: args.SyncToken as string,
@@ -218,23 +221,26 @@ function builtinHandler(
       }
       const result = await getClient().post(path, body);
       return jsonText(result);
-    };
+    });
   }
 
-  if (config.search && toolName === `${prefix}_search`) {
+  if (config.search) {
     const { field } = config.search;
-    return async (args) => {
+    map.set(`${prefix}_search`, async (args) => {
       const rawTerm = args.term as string;
-      const term = escapeQboString(rawTerm);
+      // LIKE-escape first so user `%`/`_` becomes literal, then quote-escape
+      // for SQL string-literal safety. ESCAPE '\\' tells QBO that backslash
+      // is the wildcard-escape character.
+      const term = escapeQboString(escapeQboLike(rawTerm));
       const startPosition = assertPositiveInt(args.startPosition ?? 1, "startPosition");
       const maxResults = assertPositiveInt(args.maxResults ?? 100, "maxResults");
-      const sql = `SELECT * FROM ${config.name} WHERE ${field} LIKE '%${term}%' STARTPOSITION ${startPosition} MAXRESULTS ${maxResults}`;
+      const sql = `SELECT * FROM ${config.name} WHERE ${field} LIKE '%${term}%' ESCAPE '\\' STARTPOSITION ${startPosition} MAXRESULTS ${maxResults}`;
       const result = await getClient().query(sql);
       return jsonText(result);
-    };
+    });
   }
 
-  return null;
+  return map;
 }
 
 /**
@@ -244,21 +250,30 @@ export function entityTools(config: EntityConfig, extras?: EntityExtras): Tool[]
   return [...generateEntityTools(config), ...(extras?.tools ?? [])];
 }
 
-/**
- * Dispatch a tool call to either an extra handler (if registered) or the
- * built-in handler for this config. Returns null if the tool name doesn't
- * belong to this entity at all.
- */
-export async function dispatchEntityTool(
-  config: EntityConfig,
-  extras: EntityExtras | undefined,
+export type EntityDispatcher = (
   toolName: string,
   args: Record<string, unknown>
-): Promise<ToolResult | null> {
-  const override = extras?.handlers?.[toolName];
-  if (override) return override(args);
+) => Promise<ToolResult | null>;
 
-  const handler = builtinHandler(config, toolName);
-  if (!handler) return null;
-  return handler(args);
+/**
+ * Build a dispatcher for one entity. The handler table is constructed once
+ * here and captured in the returned closure, so each tool-call is a single
+ * map lookup. Returns null when the tool name doesn't belong to this entity,
+ * so the registry can keep walking.
+ */
+export function makeEntityDispatcher(
+  config: EntityConfig,
+  extras?: EntityExtras
+): EntityDispatcher {
+  const overrides: Record<string, ExtraHandler> = extras?.handlers ?? {};
+  const builtins = builtinHandlers(config);
+
+  return async (toolName, args) => {
+    const override = overrides[toolName];
+    if (override) return override(args);
+
+    const handler = builtins.get(toolName);
+    if (!handler) return null;
+    return handler(args);
+  };
 }

@@ -12,14 +12,26 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 export type EntityFieldType = "string" | "number" | "object" | "array" | "boolean";
 
-export interface EntityField {
-  name: string;
-  type: EntityFieldType;
-  required?: boolean;
-  description: string;
-  /** For array fields: schema of each item (passed through verbatim). */
-  items?: { type: EntityFieldType };
-}
+/**
+ * Field descriptor for create/update tool input schemas. The shape is a
+ * discriminated union so `items` is required exactly when `type === "array"`
+ * and forbidden otherwise — a stray `items` on a scalar field would emit
+ * malformed JSON Schema and is now a type error.
+ */
+export type EntityField =
+  | {
+      name: string;
+      description: string;
+      required?: boolean;
+      type: "string" | "number" | "boolean" | "object";
+    }
+  | {
+      name: string;
+      description: string;
+      required?: boolean;
+      type: "array";
+      items: { type: Exclude<EntityFieldType, "array"> };
+    };
 
 export interface ListOp {
   /** If true, list tool accepts startDate/endDate filtering on TxnDate. */

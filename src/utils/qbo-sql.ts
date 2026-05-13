@@ -17,6 +17,16 @@ export function escapeQboString(value: string): string {
 }
 
 /**
+ * Escape LIKE-pattern metacharacters in a user-supplied search term so that
+ * `qbo_x_search` does literal substring matching rather than treating `%` or
+ * `_` as wildcards. Must be paired with `ESCAPE '\\'` in the SQL clause.
+ * Quote escaping is the caller's responsibility (run `escapeQboString` after).
+ */
+export function escapeQboLike(value: string): string {
+  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
+/**
  * Validate that a string matches QBO's expected date format (YYYY-MM-DD).
  * Throws on invalid input — these strings flow into query bodies, so silent
  * coercion would defeat the purpose.
