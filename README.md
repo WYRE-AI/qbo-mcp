@@ -1,13 +1,12 @@
 # QuickBooks Online MCP Server
 
-Model Context Protocol (MCP) server for the [QuickBooks Online Accounting API](https://developer.intuit.com/app/developer/qbo/docs/api/accounting/all-entities/account). Enables Claude and other MCP-compatible clients to manage QBO customers, invoices, expenses, payments, and reports.
+Model Context Protocol (MCP) server for the [QuickBooks Online Accounting API](https://developer.intuit.com/app/developer/qbo/docs/api/accounting/all-entities/account). Exposes 130+ tools across 22 QBO entities plus 10 financial reports for Claude and other MCP-compatible clients.
 
 ## One-Click Deployment
 
 [![Deploy to DO](https://www.deploytodo.com/do-btn-blue.svg)](https://cloud.digitalocean.com/apps/new?repo=https://github.com/wyre-technology/qbo-mcp/tree/main)
 
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/wyre-technology/qbo-mcp)
-
 
 ## Quick Start
 
@@ -54,63 +53,100 @@ docker run -p 8080:8080 \
 |---|---|---|---|
 | `QBO_ACCESS_TOKEN` | Yes (env mode) | — | QuickBooks Online OAuth2 access token |
 | `QBO_REALM_ID` | Yes (env mode) | — | QuickBooks Online company (realm) ID |
+| `QBO_ENV` | No | `production` | API environment: `production` or `sandbox` |
 | `MCP_TRANSPORT` | No | `stdio` | Transport type: `stdio` or `http` |
 | `MCP_HTTP_PORT` | No | `8080` | HTTP server port |
 | `MCP_HTTP_HOST` | No | `0.0.0.0` | HTTP server bind address |
 | `AUTH_MODE` | No | `env` | Auth mode: `env` or `gateway` |
 
-## Gateway Mode
+## Authentication
 
-When `AUTH_MODE=gateway`, credentials are passed per-request via HTTP headers instead of environment variables:
+The server does not handle the OAuth flow — it consumes a pre-obtained access token. Two modes:
 
-- `X-Qbo-Access-Token` — OAuth2 access token
-- `X-Qbo-Realm-Id` — QuickBooks Online company (realm) ID
+**env mode (default).** Token comes from `QBO_ACCESS_TOKEN`. Single tenant.
 
-This allows a gateway/proxy to manage multi-tenant credentials.
+**gateway mode.** Token comes from per-request HTTP headers, isolated through `AsyncLocalStorage` so concurrent requests never share credentials. Set `AUTH_MODE=gateway` and send:
+
+| Header | Required | Description |
+|---|---|---|
+| `X-Qbo-Access-Token` | Yes | OAuth2 access token |
+| `X-Qbo-Realm-Id` | Yes | Company (realm) ID |
+| `X-Qbo-Environment` | No | `production` or `sandbox` (defaults to `production`) |
+
+When QBO rejects the access token, the server returns an MCP error whose text begins with the literal prefix `QBO_UNAUTHORIZED:`. The intended contract is that the gateway detects this prefix, refreshes the OAuth token, and retries the request.
+
+## Sandbox Testing
+
+Set `QBO_ENV=sandbox` (env mode) or `X-Qbo-Environment: sandbox` (gateway mode) to target Intuit's sandbox API at `https://sandbox-quickbooks.api.intuit.com` instead of production. Unrecognized values fail loudly (no silent fallback to production).
 
 ## Available Tools
 
-Tools are organized into domains. Use `qbo_navigate` to select a domain, then use the domain-specific tools.
+Tools are organized by domain. Call `qbo_navigate` with a domain name (e.g. `customers`, `vendors`, `bills`) to discover the tools in that domain. All tools are always callable — navigation is a discovery aid, not a prerequisite.
 
-### Navigation
+### Entities (config-driven, 116 tools across 22 entities)
 
-- `qbo_navigate` — Select a domain (customers, invoices, expenses, payments, reports)
-- `qbo_back` — Return to domain selection
+Each entity exposes some subset of `list`, `get`, `create`, `update`, `search`. Transactional entities support `startDate`/`endDate` filtering on the list operation. Updates are sparse and require the current `SyncToken` from a prior get.
 
-### Customers
+**Sales workflow**
+- `qbo_customers_*` — list, get, create, search
+- `qbo_invoices_*` — list (Paid/Unpaid/Overdue status filter), get, create, send
+- `qbo_estimates_*` — list, get, create, update
+- `qbo_sales_receipts_*` — list, get, create, update
+- `qbo_credit_memos_*` — list, get, create, update
+- `qbo_refund_receipts_*` — list, get, create, update
+- `qbo_payments_*` — list, get, create
 
-- `qbo_customers_list` — List customers
-- `qbo_customers_get` — Get customer by ID
-- `qbo_customers_create` — Create a new customer
-- `qbo_customers_search` — Search customers by name or other criteria
+**Purchase workflow**
+- `qbo_vendors_*` — list, get, create, update, search
+- `qbo_bills_*` — list, get, create, update, search
+- `qbo_bill_payments_*` — list, get, create, update
+- `qbo_vendor_credits_*` — list, get, create, update
+- `qbo_purchases_*` — list, get, create, update (point-of-sale expenses)
+- `qbo_purchase_orders_*` — list, get, create, update
 
-### Invoices
+**Bank & money movement**
+- `qbo_deposits_*` — list, get, create, update
+- `qbo_transfers_*` — list, get, create, update
+- `qbo_journal_entries_*` — list, get, create, update (balanced debit/credit)
 
-- `qbo_invoices_list` — List invoices
-- `qbo_invoices_get` — Get invoice by ID
-- `qbo_invoices_create` — Create a new invoice
-- `qbo_invoices_send` — Send an invoice via email
+**Products & accounts**
+- `qbo_items_*` — list, get, create, update, search (products and services)
+- `qbo_accounts_*` — list, get, create, update, search (chart of accounts)
 
-### Expenses
+**Classification & terms**
+- `qbo_classes_*` — list, get, create, update, search
+- `qbo_departments_*` — list, get, create, update, search
+- `qbo_terms_*` — list, get, create, update, search (Net 30, etc.)
+- `qbo_payment_methods_*` — list, get, create, update, search
 
-- `qbo_expenses_list_purchases` — List purchase transactions
-- `qbo_expenses_list_bills` — List bills
-- `qbo_expenses_get_purchase` — Get purchase by ID
-- `qbo_expenses_get_bill` — Get bill by ID
+**Tax & company**
+- `qbo_tax_codes_*` — list, get, search (read-only)
+- `qbo_tax_rates_*` — list, get, search (read-only)
+- `qbo_company_info_*` — list, get (read-only singleton)
 
-### Payments
+**People & time**
+- `qbo_employees_*` — list, get, create, update, search
+- `qbo_time_activities_*` — list, get, create, update (billable time)
 
-- `qbo_payments_list` — List payments
-- `qbo_payments_get` — Get payment by ID
-- `qbo_payments_create` — Create a new payment
+**Attachments**
+- `qbo_attachables_*` — list, get, create, update (metadata only; file upload uses a separate QBO endpoint)
 
-### Reports
+### Reports (10 tools)
 
-- `qbo_reports_profit_and_loss` — Generate Profit and Loss report
-- `qbo_reports_balance_sheet` — Generate Balance Sheet report
-- `qbo_reports_aged_receivables` — Generate Aged Receivables report
-- `qbo_reports_aged_payables` — Generate Aged Payables report
-- `qbo_reports_customer_sales` — Generate Customer Sales report
+- `qbo_reports_profit_and_loss`
+- `qbo_reports_balance_sheet`
+- `qbo_reports_cash_flow`
+- `qbo_reports_trial_balance`
+- `qbo_reports_general_ledger`
+- `qbo_reports_aged_receivables`
+- `qbo_reports_aged_payables`
+- `qbo_reports_customer_sales`
+- `qbo_reports_customer_balance`
+- `qbo_reports_vendor_expenses`
+
+### Legacy expense tools (backwards compatibility)
+
+`qbo_expenses_list_purchases`, `qbo_expenses_get_purchase`, `qbo_expenses_list_bills`, `qbo_expenses_get_bill` remain available. New work should use the dedicated `qbo_purchases_*` and `qbo_bills_*` tool families, which add create/update/search.
 
 ## License
 
