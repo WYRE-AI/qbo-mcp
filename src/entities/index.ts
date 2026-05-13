@@ -31,6 +31,15 @@ import { refundReceiptConfig } from "./refund-receipt.js";
 import { depositConfig } from "./deposit.js";
 import { transferConfig } from "./transfer.js";
 import { timeActivityConfig } from "./time-activity.js";
+import { classConfig } from "./class.js";
+import { departmentConfig } from "./department.js";
+import { termConfig } from "./term.js";
+import { paymentMethodConfig } from "./payment-method.js";
+import { taxCodeConfig } from "./tax-code.js";
+import { taxRateConfig } from "./tax-rate.js";
+import { employeeConfig } from "./employee.js";
+import { companyInfoConfig } from "./company-info.js";
+import { attachableConfig } from "./attachable.js";
 
 interface RegistryEntry {
   config: EntityConfig;
@@ -68,6 +77,15 @@ const registry: RegistryEntry[] = [
   makeEntry(depositConfig),
   makeEntry(transferConfig),
   makeEntry(timeActivityConfig),
+  makeEntry(classConfig),
+  makeEntry(departmentConfig),
+  makeEntry(termConfig),
+  makeEntry(paymentMethodConfig),
+  makeEntry(taxCodeConfig),
+  makeEntry(taxRateConfig),
+  makeEntry(employeeConfig),
+  makeEntry(companyInfoConfig),
+  makeEntry(attachableConfig),
 ];
 
 export const allEntityTools: Tool[] = registry.flatMap((e) => e.tools);
