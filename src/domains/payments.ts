@@ -4,7 +4,7 @@
 
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { getClient } from "../utils/client.js";
-import { assertDate, assertPositiveInt } from "../utils/qbo-sql.js";
+import { buildDatedListSql, type DatedListArgs } from "../utils/qbo-sql.js";
 
 /**
  * Payment domain tool definitions
@@ -113,30 +113,9 @@ export async function handlePaymentTool(
 
   switch (name) {
     case "qbo_payments_list": {
-      const rawArgs = args as {
-        startPosition?: number;
-        maxResults?: number;
-        startDate?: string;
-        endDate?: string;
-      };
-      const startPosition = assertPositiveInt(rawArgs.startPosition ?? 1, "startPosition");
-      const maxResults = assertPositiveInt(rawArgs.maxResults ?? 100, "maxResults");
-
-      const conditions: string[] = [];
-      if (rawArgs.startDate) {
-        conditions.push(`TxnDate >= '${assertDate(rawArgs.startDate, "startDate")}'`);
-      }
-      if (rawArgs.endDate) {
-        conditions.push(`TxnDate <= '${assertDate(rawArgs.endDate, "endDate")}'`);
-      }
-
-      let sql = "SELECT * FROM Payment";
-      if (conditions.length > 0) {
-        sql += ` WHERE ${conditions.join(" AND ")}`;
-      }
-      sql += ` STARTPOSITION ${startPosition} MAXRESULTS ${maxResults}`;
-
-      const response = await client.query(sql);
+      const response = await client.query(
+        buildDatedListSql("Payment", args as DatedListArgs)
+      );
       return {
         content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
       };

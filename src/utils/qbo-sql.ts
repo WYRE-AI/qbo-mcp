@@ -48,3 +48,40 @@ export function assertPositiveInt(
   }
   return n;
 }
+
+export interface DatedListArgs {
+  startPosition?: number;
+  maxResults?: number;
+  startDate?: string;
+  endDate?: string;
+}
+
+/**
+ * Build `SELECT * FROM {entity} [WHERE ...] STARTPOSITION x MAXRESULTS y`
+ * with optional TxnDate range + caller-supplied extra conditions. The
+ * `extraConditions` argument is appended verbatim — callers are responsible
+ * for escaping any user input it contains.
+ */
+export function buildDatedListSql(
+  entity: string,
+  args: DatedListArgs,
+  extraConditions: string[] = []
+): string {
+  const startPosition = assertPositiveInt(args.startPosition ?? 1, "startPosition");
+  const maxResults = assertPositiveInt(args.maxResults ?? 100, "maxResults");
+
+  const conditions: string[] = [...extraConditions];
+  if (args.startDate) {
+    conditions.push(`TxnDate >= '${assertDate(args.startDate, "startDate")}'`);
+  }
+  if (args.endDate) {
+    conditions.push(`TxnDate <= '${assertDate(args.endDate, "endDate")}'`);
+  }
+
+  let sql = `SELECT * FROM ${entity}`;
+  if (conditions.length > 0) {
+    sql += ` WHERE ${conditions.join(" AND ")}`;
+  }
+  sql += ` STARTPOSITION ${startPosition} MAXRESULTS ${maxResults}`;
+  return sql;
+}

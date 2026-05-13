@@ -353,9 +353,21 @@ async function startHttpTransport(): Promise<void> {
           const realmId = req.headers["x-qbo-realm-id"] as
             | string
             | undefined;
-          const environment = parseEnvironment(
-            req.headers["x-qbo-environment"] as string | undefined
-          );
+          let environment: ReturnType<typeof parseEnvironment>;
+          try {
+            environment = parseEnvironment(
+              req.headers["x-qbo-environment"] as string | undefined
+            );
+          } catch (err) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(
+              JSON.stringify({
+                error: "Invalid X-Qbo-Environment header",
+                message: err instanceof Error ? err.message : String(err),
+              })
+            );
+            return;
+          }
 
           if (!accessToken || !realmId) {
             console.error(

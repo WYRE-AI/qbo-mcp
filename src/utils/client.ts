@@ -198,13 +198,18 @@ export const credentialStore = new AsyncLocalStorage<QboCredentials>();
 
 /**
  * Parse a QBO environment string, defaulting to production. Accepts both
- * "production" and "prod", "sandbox" and "sbx" for header convenience.
+ * "production"/"prod" and "sandbox"/"sbx" for header convenience. Throws on
+ * any other non-empty value so a stray `X-Qbo-Environment: staging` header
+ * fails loudly rather than silently routing to production.
  */
 export function parseEnvironment(value: string | undefined): QboEnvironment {
   if (!value) return "production";
   const normalized = value.toLowerCase();
   if (normalized === "sandbox" || normalized === "sbx") return "sandbox";
-  return "production";
+  if (normalized === "production" || normalized === "prod") return "production";
+  throw new Error(
+    `Invalid QBO environment ${JSON.stringify(value)}: expected "production" or "sandbox"`
+  );
 }
 
 /**

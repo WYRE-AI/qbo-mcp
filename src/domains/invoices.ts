@@ -5,7 +5,7 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { getClient } from "../utils/client.js";
 import { elicitText } from "../utils/elicitation.js";
-import { assertDate, assertPositiveInt } from "../utils/qbo-sql.js";
+import { buildDatedListSql, type DatedListArgs } from "../utils/qbo-sql.js";
 
 /**
  * Invoice domain tool definitions
@@ -139,15 +139,7 @@ export async function handleInvoiceTool(
 
   switch (name) {
     case "qbo_invoices_list": {
-      const rawArgs = args as {
-        startPosition?: number;
-        maxResults?: number;
-        status?: string;
-        startDate?: string;
-        endDate?: string;
-      };
-      const startPosition = assertPositiveInt(rawArgs.startPosition ?? 1, "startPosition");
-      const maxResults = assertPositiveInt(rawArgs.maxResults ?? 100, "maxResults");
+      const rawArgs = args as DatedListArgs & { status?: string };
       let { status, startDate, endDate } = rawArgs;
 
       if (!status && !startDate && !endDate && Object.keys(args).length === 0) {
@@ -167,29 +159,21 @@ export async function handleInvoiceTool(
         }
       }
 
-      const conditions: string[] = [];
+      const statusConditions: string[] = [];
       if (status === "Paid") {
-        conditions.push("Balance = '0'");
+        statusConditions.push("Balance = '0'");
       } else if (status === "Unpaid") {
-        conditions.push("Balance > '0'");
+        statusConditions.push("Balance > '0'");
       } else if (status === "Overdue") {
-        // Server-generated, but still goes through validation for consistency.
-        const today = assertDate(new Date().toISOString().split("T")[0]!, "today");
-        conditions.push(`Balance > '0' AND DueDate < '${today}'`);
-      }
-      if (startDate) {
-        conditions.push(`TxnDate >= '${assertDate(startDate, "startDate")}'`);
-      }
-      if (endDate) {
-        conditions.push(`TxnDate <= '${assertDate(endDate, "endDate")}'`);
+        const today = new Date().toISOString().slice(0, 10);
+        statusConditions.push(`Balance > '0' AND DueDate < '${today}'`);
       }
 
-      let sql = "SELECT * FROM Invoice";
-      if (conditions.length > 0) {
-        sql += ` WHERE ${conditions.join(" AND ")}`;
-      }
-      sql += ` STARTPOSITION ${startPosition} MAXRESULTS ${maxResults}`;
-
+      const sql = buildDatedListSql(
+        "Invoice",
+        { ...rawArgs, startDate, endDate },
+        statusConditions
+      );
       const response = await client.query(sql);
       return {
         content: [{ type: "text", text: JSON.stringify(response, null, 2) }],

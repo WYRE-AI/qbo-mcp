@@ -4,38 +4,7 @@
 
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { getClient } from "../utils/client.js";
-import { assertDate, assertPositiveInt } from "../utils/qbo-sql.js";
-
-/**
- * Build a "SELECT * FROM {entity} [WHERE TxnDate ...] STARTPOSITION x MAXRESULTS y"
- * query from a tool args object. Used by both Purchase and Bill list tools,
- * which share the same shape.
- */
-function buildDatedListSql(entity: string, args: Record<string, unknown>): string {
-  const rawArgs = args as {
-    startPosition?: number;
-    maxResults?: number;
-    startDate?: string;
-    endDate?: string;
-  };
-  const startPosition = assertPositiveInt(rawArgs.startPosition ?? 1, "startPosition");
-  const maxResults = assertPositiveInt(rawArgs.maxResults ?? 100, "maxResults");
-
-  const conditions: string[] = [];
-  if (rawArgs.startDate) {
-    conditions.push(`TxnDate >= '${assertDate(rawArgs.startDate, "startDate")}'`);
-  }
-  if (rawArgs.endDate) {
-    conditions.push(`TxnDate <= '${assertDate(rawArgs.endDate, "endDate")}'`);
-  }
-
-  let sql = `SELECT * FROM ${entity}`;
-  if (conditions.length > 0) {
-    sql += ` WHERE ${conditions.join(" AND ")}`;
-  }
-  sql += ` STARTPOSITION ${startPosition} MAXRESULTS ${maxResults}`;
-  return sql;
-}
+import { buildDatedListSql, type DatedListArgs } from "../utils/qbo-sql.js";
 
 /**
  * Expense domain tool definitions
@@ -142,16 +111,18 @@ export async function handleExpenseTool(
 
   switch (name) {
     case "qbo_expenses_list_purchases": {
-      const sql = buildDatedListSql("Purchase", args);
-      const response = await client.query(sql);
+      const response = await client.query(
+        buildDatedListSql("Purchase", args as DatedListArgs)
+      );
       return {
         content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
       };
     }
 
     case "qbo_expenses_list_bills": {
-      const sql = buildDatedListSql("Bill", args);
-      const response = await client.query(sql);
+      const response = await client.query(
+        buildDatedListSql("Bill", args as DatedListArgs)
+      );
       return {
         content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
       };
