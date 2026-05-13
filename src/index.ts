@@ -31,7 +31,7 @@ import { invoiceTools, handleInvoiceTool } from "./domains/invoices.js";
 import { expenseTools, handleExpenseTool } from "./domains/expenses.js";
 import { paymentTools, handlePaymentTool } from "./domains/payments.js";
 import { reportTools, handleReportTool } from "./domains/reports.js";
-import { credentialStore } from "./utils/client.js";
+import { credentialStore, parseEnvironment, QboApiError } from "./utils/client.js";
 import { setServerRef } from "./utils/server-ref.js";
 
 /**
@@ -229,11 +229,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     if (name === "qbo_status") {
-      const accessToken = process.env.QBO_ACCESS_TOKEN;
-      const realmId = process.env.QBO_REALM_ID;
+      const override = credentialStore.getStore();
+      const accessToken = override?.accessToken ?? process.env.QBO_ACCESS_TOKEN;
+      const realmId = override?.realmId ?? process.env.QBO_REALM_ID;
+      const environment = override?.environment ?? parseEnvironment(process.env.QBO_ENV);
       const credStatus = (accessToken && realmId)
-        ? `Configured (realm: ${realmId})`
-        : "NOT CONFIGURED - Please set environment variables";
+        ? `Configured (realm: ${realmId}, environment: ${environment})`
+        : "NOT CONFIGURED - Please set credentials (env vars or gateway headers)";
 
       return {
         content: [
@@ -275,6 +277,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       isError: true,
     };
   } catch (error) {
+    // Tag 401s structurally so a gateway can detect "refresh and retry". The
+    // message starts with a stable prefix and the body is preserved verbatim.
+    if (error instanceof QboApiError && error.isUnauthorized) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `QBO_UNAUTHORIZED: access token rejected by QuickBooks Online (realm may also be wrong). Gateway should refresh the OAuth token and retry. Upstream body: ${error.body}`,
+          },
+        ],
+        isError: true,
+      };
+    }
     const message = error instanceof Error ? error.message : String(error);
     return {
       content: [{ type: "text", text: `Error: ${message}` }],
@@ -338,6 +353,9 @@ async function startHttpTransport(): Promise<void> {
           const realmId = req.headers["x-qbo-realm-id"] as
             | string
             | undefined;
+          const environment = parseEnvironment(
+            req.headers["x-qbo-environment"] as string | undefined
+          );
 
           if (!accessToken || !realmId) {
             console.error(
@@ -350,6 +368,7 @@ async function startHttpTransport(): Promise<void> {
                 message:
                   "Gateway mode requires X-Qbo-Access-Token and X-Qbo-Realm-Id headers",
                 required: ["X-Qbo-Access-Token", "X-Qbo-Realm-Id"],
+                optional: ["X-Qbo-Environment (production|sandbox, default production)"],
               })
             );
             return;
@@ -358,7 +377,7 @@ async function startHttpTransport(): Promise<void> {
           // Run the MCP handler within an AsyncLocalStorage context so that
           // getClient() picks up these credentials without mutating process.env.
           // This prevents concurrent requests from overwriting each other's creds.
-          credentialStore.run({ accessToken, realmId }, () => {
+          credentialStore.run({ accessToken, realmId, environment }, () => {
             transport.handleRequest(req, res);
           });
           return;

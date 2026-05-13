@@ -4,6 +4,38 @@
 
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { getClient } from "../utils/client.js";
+import { assertDate, assertPositiveInt } from "../utils/qbo-sql.js";
+
+/**
+ * Build a "SELECT * FROM {entity} [WHERE TxnDate ...] STARTPOSITION x MAXRESULTS y"
+ * query from a tool args object. Used by both Purchase and Bill list tools,
+ * which share the same shape.
+ */
+function buildDatedListSql(entity: string, args: Record<string, unknown>): string {
+  const rawArgs = args as {
+    startPosition?: number;
+    maxResults?: number;
+    startDate?: string;
+    endDate?: string;
+  };
+  const startPosition = assertPositiveInt(rawArgs.startPosition ?? 1, "startPosition");
+  const maxResults = assertPositiveInt(rawArgs.maxResults ?? 100, "maxResults");
+
+  const conditions: string[] = [];
+  if (rawArgs.startDate) {
+    conditions.push(`TxnDate >= '${assertDate(rawArgs.startDate, "startDate")}'`);
+  }
+  if (rawArgs.endDate) {
+    conditions.push(`TxnDate <= '${assertDate(rawArgs.endDate, "endDate")}'`);
+  }
+
+  let sql = `SELECT * FROM ${entity}`;
+  if (conditions.length > 0) {
+    sql += ` WHERE ${conditions.join(" AND ")}`;
+  }
+  sql += ` STARTPOSITION ${startPosition} MAXRESULTS ${maxResults}`;
+  return sql;
+}
 
 /**
  * Expense domain tool definitions
@@ -110,28 +142,7 @@ export async function handleExpenseTool(
 
   switch (name) {
     case "qbo_expenses_list_purchases": {
-      const { startPosition = 1, maxResults = 100, startDate, endDate } =
-        args as {
-          startPosition?: number;
-          maxResults?: number;
-          startDate?: string;
-          endDate?: string;
-        };
-
-      const conditions: string[] = [];
-      if (startDate) {
-        conditions.push(`TxnDate >= '${startDate}'`);
-      }
-      if (endDate) {
-        conditions.push(`TxnDate <= '${endDate}'`);
-      }
-
-      let sql = "SELECT * FROM Purchase";
-      if (conditions.length > 0) {
-        sql += ` WHERE ${conditions.join(" AND ")}`;
-      }
-      sql += ` STARTPOSITION ${startPosition} MAXRESULTS ${maxResults}`;
-
+      const sql = buildDatedListSql("Purchase", args);
       const response = await client.query(sql);
       return {
         content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
@@ -139,28 +150,7 @@ export async function handleExpenseTool(
     }
 
     case "qbo_expenses_list_bills": {
-      const { startPosition = 1, maxResults = 100, startDate, endDate } =
-        args as {
-          startPosition?: number;
-          maxResults?: number;
-          startDate?: string;
-          endDate?: string;
-        };
-
-      const conditions: string[] = [];
-      if (startDate) {
-        conditions.push(`TxnDate >= '${startDate}'`);
-      }
-      if (endDate) {
-        conditions.push(`TxnDate <= '${endDate}'`);
-      }
-
-      let sql = "SELECT * FROM Bill";
-      if (conditions.length > 0) {
-        sql += ` WHERE ${conditions.join(" AND ")}`;
-      }
-      sql += ` STARTPOSITION ${startPosition} MAXRESULTS ${maxResults}`;
-
+      const sql = buildDatedListSql("Bill", args);
       const response = await client.query(sql);
       return {
         content: [{ type: "text", text: JSON.stringify(response, null, 2) }],

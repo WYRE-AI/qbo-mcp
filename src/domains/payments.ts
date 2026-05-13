@@ -4,6 +4,7 @@
 
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { getClient } from "../utils/client.js";
+import { assertDate, assertPositiveInt } from "../utils/qbo-sql.js";
 
 /**
  * Payment domain tool definitions
@@ -112,20 +113,21 @@ export async function handlePaymentTool(
 
   switch (name) {
     case "qbo_payments_list": {
-      const { startPosition = 1, maxResults = 100, startDate, endDate } =
-        args as {
-          startPosition?: number;
-          maxResults?: number;
-          startDate?: string;
-          endDate?: string;
-        };
+      const rawArgs = args as {
+        startPosition?: number;
+        maxResults?: number;
+        startDate?: string;
+        endDate?: string;
+      };
+      const startPosition = assertPositiveInt(rawArgs.startPosition ?? 1, "startPosition");
+      const maxResults = assertPositiveInt(rawArgs.maxResults ?? 100, "maxResults");
 
       const conditions: string[] = [];
-      if (startDate) {
-        conditions.push(`TxnDate >= '${startDate}'`);
+      if (rawArgs.startDate) {
+        conditions.push(`TxnDate >= '${assertDate(rawArgs.startDate, "startDate")}'`);
       }
-      if (endDate) {
-        conditions.push(`TxnDate <= '${endDate}'`);
+      if (rawArgs.endDate) {
+        conditions.push(`TxnDate <= '${assertDate(rawArgs.endDate, "endDate")}'`);
       }
 
       let sql = "SELECT * FROM Payment";

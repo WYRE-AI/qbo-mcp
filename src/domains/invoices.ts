@@ -5,6 +5,7 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { getClient } from "../utils/client.js";
 import { elicitText } from "../utils/elicitation.js";
+import { assertDate, assertPositiveInt } from "../utils/qbo-sql.js";
 
 /**
  * Invoice domain tool definitions
@@ -138,21 +139,17 @@ export async function handleInvoiceTool(
 
   switch (name) {
     case "qbo_invoices_list": {
-      let {
-        startPosition = 1,
-        maxResults = 100,
-        status,
-        startDate,
-        endDate,
-      } = args as {
+      const rawArgs = args as {
         startPosition?: number;
         maxResults?: number;
         status?: string;
         startDate?: string;
         endDate?: string;
       };
+      const startPosition = assertPositiveInt(rawArgs.startPosition ?? 1, "startPosition");
+      const maxResults = assertPositiveInt(rawArgs.maxResults ?? 100, "maxResults");
+      let { status, startDate, endDate } = rawArgs;
 
-      // If no filters provided, ask the user for a date range
       if (!status && !startDate && !endDate && Object.keys(args).length === 0) {
         const from = await elicitText(
           "Would you like to filter invoices by date range? Enter a start date, or leave blank to list all.",
@@ -176,14 +173,15 @@ export async function handleInvoiceTool(
       } else if (status === "Unpaid") {
         conditions.push("Balance > '0'");
       } else if (status === "Overdue") {
-        const today = new Date().toISOString().split("T")[0];
+        // Server-generated, but still goes through validation for consistency.
+        const today = assertDate(new Date().toISOString().split("T")[0]!, "today");
         conditions.push(`Balance > '0' AND DueDate < '${today}'`);
       }
       if (startDate) {
-        conditions.push(`TxnDate >= '${startDate}'`);
+        conditions.push(`TxnDate >= '${assertDate(startDate, "startDate")}'`);
       }
       if (endDate) {
-        conditions.push(`TxnDate <= '${endDate}'`);
+        conditions.push(`TxnDate <= '${assertDate(endDate, "endDate")}'`);
       }
 
       let sql = "SELECT * FROM Invoice";

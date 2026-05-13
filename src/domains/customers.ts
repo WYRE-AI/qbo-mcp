@@ -5,6 +5,7 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { getClient } from "../utils/client.js";
 import { elicitText } from "../utils/elicitation.js";
+import { assertPositiveInt, escapeQboString } from "../utils/qbo-sql.js";
 
 /**
  * Customer domain tool definitions
@@ -123,12 +124,10 @@ export async function handleCustomerTool(
 
   switch (name) {
     case "qbo_customers_list": {
-      const { startPosition = 1, maxResults = 100 } = args as {
-        startPosition?: number;
-        maxResults?: number;
-      };
+      const rawArgs = args as { startPosition?: number; maxResults?: number };
+      const startPosition = assertPositiveInt(rawArgs.startPosition ?? 1, "startPosition");
+      const maxResults = assertPositiveInt(rawArgs.maxResults ?? 100, "maxResults");
 
-      // If called with default pagination (no explicit args), offer to search
       let searchTerm: string | null = null;
       if (startPosition === 1 && maxResults === 100 && Object.keys(args).length === 0) {
         searchTerm = await elicitText(
@@ -140,7 +139,7 @@ export async function handleCustomerTool(
 
       let sql: string;
       if (searchTerm) {
-        sql = `SELECT * FROM Customer WHERE DisplayName LIKE '%${searchTerm}%' STARTPOSITION ${startPosition} MAXRESULTS ${maxResults}`;
+        sql = `SELECT * FROM Customer WHERE DisplayName LIKE '%${escapeQboString(searchTerm)}%' STARTPOSITION ${startPosition} MAXRESULTS ${maxResults}`;
       } else {
         sql = `SELECT * FROM Customer STARTPOSITION ${startPosition} MAXRESULTS ${maxResults}`;
       }
@@ -192,11 +191,14 @@ export async function handleCustomerTool(
     }
 
     case "qbo_customers_search": {
-      const { term, startPosition = 1, maxResults = 100 } = args as {
+      const rawArgs = args as {
         term: string;
         startPosition?: number;
         maxResults?: number;
       };
+      const startPosition = assertPositiveInt(rawArgs.startPosition ?? 1, "startPosition");
+      const maxResults = assertPositiveInt(rawArgs.maxResults ?? 100, "maxResults");
+      const term = escapeQboString(rawArgs.term);
 
       const sql = `SELECT * FROM Customer WHERE DisplayName LIKE '%${term}%' STARTPOSITION ${startPosition} MAXRESULTS ${maxResults}`;
       const response = await client.query(sql);
