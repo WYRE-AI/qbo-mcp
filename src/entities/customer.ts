@@ -1,20 +1,18 @@
 /**
- * Customer entity config.
- *
- * Migrated from src/domains/customers.ts. The list-with-no-args elicitation
- * prompt is the one piece of hand-written behavior — it can't be expressed
- * declaratively, so it lives in `extras.handlers` as an override on the
- * generated list handler.
+ * Customer entity config. The list-with-no-args elicitation prompt can't be
+ * expressed declaratively, so it lives in `extras.handlers` as an override.
  */
 
 import { getClient } from "../utils/client.js";
 import {
   assertPositiveInt,
   buildDatedListSql,
+  escapeQboLike,
   escapeQboString,
   type DatedListArgs,
 } from "../utils/qbo-sql.js";
 import { elicitText } from "../utils/elicitation.js";
+import { jsonText } from "./generator.js";
 import type { EntityConfig, EntityExtras } from "./types.js";
 
 export const customerConfig: EntityConfig = {
@@ -80,12 +78,15 @@ export const customerExtras: EntityExtras = {
 
       let sql: string;
       if (searchTerm) {
-        sql = `SELECT * FROM Customer WHERE DisplayName LIKE '%${escapeQboString(searchTerm)}%' STARTPOSITION ${startPosition} MAXRESULTS ${maxResults}`;
+        // Match the generator's search-handler escape posture: LIKE-escape
+        // wildcards in the term, then quote-escape the result, with
+        // ESCAPE '\\' so backslash is the wildcard-escape char.
+        const term = escapeQboString(escapeQboLike(searchTerm));
+        sql = `SELECT * FROM Customer WHERE DisplayName LIKE '%${term}%' ESCAPE '\\' STARTPOSITION ${startPosition} MAXRESULTS ${maxResults}`;
       } else {
         sql = buildDatedListSql("Customer", args as DatedListArgs);
       }
-      const result = await getClient().query(sql);
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      return jsonText(await getClient().query(sql));
     },
   },
 };

@@ -1,7 +1,4 @@
-/**
- * Payment entity config. Clean CRUD — no extras needed; the generator handles
- * the standard list (with TxnDate range), get, and create operations.
- */
+/** Payment entity config — standard CRUD; generator handles everything. */
 
 import type { EntityConfig } from "./types.js";
 

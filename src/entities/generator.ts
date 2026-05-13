@@ -34,7 +34,12 @@ function pathFor(config: EntityConfig, override?: string): string {
   return override ?? config.name.toLowerCase();
 }
 
-function jsonText(value: unknown): ToolResult {
+/**
+ * Wrap an arbitrary value as the MCP tool-result shape every QBO tool
+ * returns: a single text content block carrying pretty-printed JSON.
+ * Exported so entity-extra handlers don't have to re-inline this shape.
+ */
+export function jsonText(value: unknown): ToolResult {
   return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
 }
 

@@ -1,10 +1,7 @@
 /**
- * Invoice entity config.
- *
- * Generator handles get + create. List is fully hand-written because it
- * carries a Paid/Unpaid/Overdue status filter that doesn't fit the generic
- * dated-list shape, plus elicitation when called with no args. Send is a
- * non-CRUD action (POST /invoice/:id/send).
+ * Invoice entity config. Generator handles get + create. List is overridden
+ * for the Paid/Unpaid/Overdue status filter + date-range elicitation. Send
+ * is a non-CRUD action (POST /invoice/:id/send).
  */
 
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
@@ -14,6 +11,7 @@ import {
   buildDatedListSql,
   type DatedListArgs,
 } from "../utils/qbo-sql.js";
+import { jsonText } from "./generator.js";
 import type { EntityConfig, EntityExtras } from "./types.js";
 
 export const invoiceConfig: EntityConfig = {
@@ -150,20 +148,16 @@ export const invoiceExtras: EntityExtras = {
         { ...rawArgs, startDate, endDate },
         statusConditions
       );
-      const result = await getClient().query(sql);
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      return jsonText(await getClient().query(sql));
     },
 
     qbo_invoices_send: async (args) => {
       const { invoiceId, email } = args as { invoiceId: string; email?: string };
       const params: Record<string, string> = {};
       if (email) params.sendTo = email;
-      const result = await getClient().post(
-        `invoice/${invoiceId}/send`,
-        undefined,
-        params
+      return jsonText(
+        await getClient().post(`invoice/${invoiceId}/send`, undefined, params)
       );
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     },
   },
 };
