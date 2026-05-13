@@ -22,6 +22,15 @@ import { journalEntryConfig } from "./journal-entry.js";
 import { billConfig } from "./bill.js";
 import { billPaymentConfig } from "./bill-payment.js";
 import { vendorCreditConfig } from "./vendor-credit.js";
+import { purchaseConfig } from "./purchase.js";
+import { purchaseOrderConfig } from "./purchase-order.js";
+import { estimateConfig } from "./estimate.js";
+import { salesReceiptConfig } from "./sales-receipt.js";
+import { creditMemoConfig } from "./credit-memo.js";
+import { refundReceiptConfig } from "./refund-receipt.js";
+import { depositConfig } from "./deposit.js";
+import { transferConfig } from "./transfer.js";
+import { timeActivityConfig } from "./time-activity.js";
 
 interface RegistryEntry {
   config: EntityConfig;
@@ -50,6 +59,15 @@ const registry: RegistryEntry[] = [
   makeEntry(billConfig),
   makeEntry(billPaymentConfig),
   makeEntry(vendorCreditConfig),
+  makeEntry(purchaseConfig),
+  makeEntry(purchaseOrderConfig),
+  makeEntry(estimateConfig),
+  makeEntry(salesReceiptConfig),
+  makeEntry(creditMemoConfig),
+  makeEntry(refundReceiptConfig),
+  makeEntry(depositConfig),
+  makeEntry(transferConfig),
+  makeEntry(timeActivityConfig),
 ];
 
 export const allEntityTools: Tool[] = registry.flatMap((e) => e.tools);
