@@ -15,6 +15,13 @@ import type { EntityConfig, EntityExtras } from "./types.js";
 import { customerConfig, customerExtras } from "./customer.js";
 import { invoiceConfig, invoiceExtras } from "./invoice.js";
 import { paymentConfig } from "./payment.js";
+import { vendorConfig } from "./vendor.js";
+import { itemConfig } from "./item.js";
+import { accountConfig } from "./account.js";
+import { journalEntryConfig } from "./journal-entry.js";
+import { billConfig } from "./bill.js";
+import { billPaymentConfig } from "./bill-payment.js";
+import { vendorCreditConfig } from "./vendor-credit.js";
 
 interface RegistryEntry {
   config: EntityConfig;
@@ -36,6 +43,13 @@ const registry: RegistryEntry[] = [
   makeEntry(customerConfig, customerExtras),
   makeEntry(invoiceConfig, invoiceExtras),
   makeEntry(paymentConfig),
+  makeEntry(vendorConfig),
+  makeEntry(itemConfig),
+  makeEntry(accountConfig),
+  makeEntry(journalEntryConfig),
+  makeEntry(billConfig),
+  makeEntry(billPaymentConfig),
+  makeEntry(vendorCreditConfig),
 ];
 
 export const allEntityTools: Tool[] = registry.flatMap((e) => e.tools);
