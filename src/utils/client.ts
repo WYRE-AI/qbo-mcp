@@ -136,6 +136,29 @@ class QboClient {
   }
 
   /**
+   * POST a multipart/form-data body. Used for the /upload endpoint which
+   * needs file_metadata_NN + file_content_NN parts side by side. We don't
+   * set Content-Type — fetch derives the boundary from the FormData.
+   */
+  async postMultipart(path: string, form: FormData): Promise<unknown> {
+    const url = `${this.baseUrl}/${path}?minorversion=${MINOR_VERSION}`;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.config.accessToken}`,
+        Accept: "application/json",
+      },
+      body: form,
+    });
+    if (!response.ok) {
+      const responseBody = await response.text();
+      throw new QboApiError(response.status, "POST", path, responseBody);
+    }
+    if (response.status === 204) return null;
+    return response.json();
+  }
+
+  /**
    * Execute a SQL-like query against the QBO API.
    * Uses POST to /query with the SQL string in the request body.
    */
