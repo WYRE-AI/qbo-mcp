@@ -1,0 +1,42 @@
+name: integration
+
+# Real-API integration tests against a QBO sandbox company. Gated on the
+# QBO_SANDBOX_* repo secrets being present so dependabot / fork PRs (which
+# can't see secrets) don't fail.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    # Skip on PRs from forks — they can't access secrets and would report a
+    # confusing failure. Same-repo PRs and pushes to main do run.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af  # v4.1.0
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - name: Run sandbox integration tests
+        env:
+          QBO_SANDBOX_ACCESS_TOKEN: ${{ secrets.QBO_SANDBOX_ACCESS_TOKEN }}
+          QBO_SANDBOX_REALM_ID: ${{ secrets.QBO_SANDBOX_REALM_ID }}
+        run: |
+          if [ -z "$QBO_SANDBOX_ACCESS_TOKEN" ] || [ -z "$QBO_SANDBOX_REALM_ID" ]; then
+            echo "::notice::QBO sandbox credentials not configured; integration tests skipped."
+            echo "::notice::To enable, set the QBO_SANDBOX_ACCESS_TOKEN and QBO_SANDBOX_REALM_ID repo secrets."
+            exit 0
+          fi
+          npm run test:integration

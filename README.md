@@ -148,6 +148,15 @@ Each entity exposes some subset of `list`, `get`, `create`, `update`, `search`. 
 
 `qbo_expenses_list_purchases`, `qbo_expenses_get_purchase`, `qbo_expenses_list_bills`, `qbo_expenses_get_bill` remain available. New work should use the dedicated `qbo_purchases_*` and `qbo_bills_*` tool families, which add create/update/search.
 
+## Testing
+
+```bash
+npm test                   # unit suite — fast, no credentials needed
+npm run test:integration   # hits a real QBO sandbox; skipped without creds
+```
+
+The integration suite calls one read tool per entity tier (customers, vendors, accounts, items, journal entries, company info) against Intuit's sandbox API. It only runs when both `QBO_SANDBOX_ACCESS_TOKEN` and `QBO_SANDBOX_REALM_ID` are present in the environment. CI wires these from the matching repo secrets and skips the job (with a clear notice) when they're absent — so dependabot/fork PRs don't fail.
+
 ## License
 
 Apache-2.0
