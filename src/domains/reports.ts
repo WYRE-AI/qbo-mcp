@@ -5,6 +5,15 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { getClient } from "../utils/client.js";
 
+/** Tool name → QBO report endpoint name for reports sharing the
+ * start_date / end_date / accounting_method shape. */
+const datedReportEndpoints: Record<string, string> = {
+  qbo_reports_cash_flow: "CashFlow",
+  qbo_reports_trial_balance: "TrialBalance",
+  qbo_reports_general_ledger: "GeneralLedger",
+  qbo_reports_vendor_expenses: "VendorExpenses",
+};
+
 /**
  * Report domain tool definitions
  */
@@ -106,6 +115,82 @@ export const reportTools: Tool[] = [
       required: ["start_date", "end_date"],
     },
   },
+  {
+    name: "qbo_reports_cash_flow",
+    description:
+      "Get a Cash Flow Statement for a given date range. Shows cash inflows and outflows from operating, investing, and financing activities.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        start_date: { type: "string", description: "Start date (YYYY-MM-DD)" },
+        end_date: { type: "string", description: "End date (YYYY-MM-DD)" },
+      },
+      required: ["start_date", "end_date"],
+    },
+  },
+  {
+    name: "qbo_reports_trial_balance",
+    description:
+      "Get a Trial Balance report as of a given date. Lists all accounts with their debit/credit balances to verify the books balance.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        start_date: { type: "string", description: "Start date (YYYY-MM-DD)" },
+        end_date: { type: "string", description: "End date (YYYY-MM-DD)" },
+        accounting_method: {
+          type: "string",
+          enum: ["Cash", "Accrual"],
+          description: "Accounting method (default: Accrual)",
+        },
+      },
+      required: ["start_date", "end_date"],
+    },
+  },
+  {
+    name: "qbo_reports_general_ledger",
+    description:
+      "Get a General Ledger report for a given date range. Shows every posted transaction grouped by account.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        start_date: { type: "string", description: "Start date (YYYY-MM-DD)" },
+        end_date: { type: "string", description: "End date (YYYY-MM-DD)" },
+        accounting_method: {
+          type: "string",
+          enum: ["Cash", "Accrual"],
+          description: "Accounting method (default: Accrual)",
+        },
+      },
+      required: ["start_date", "end_date"],
+    },
+  },
+  {
+    name: "qbo_reports_customer_balance",
+    description:
+      "Get a Customer Balance report as of a given date. Lists the outstanding balance owed by each customer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        report_date: {
+          type: "string",
+          description: "Report as-of date (YYYY-MM-DD, default: today)",
+        },
+      },
+    },
+  },
+  {
+    name: "qbo_reports_vendor_expenses",
+    description:
+      "Get a Vendor Expenses report for a given date range. Shows expense totals broken down by vendor.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        start_date: { type: "string", description: "Start date (YYYY-MM-DD)" },
+        end_date: { type: "string", description: "End date (YYYY-MM-DD)" },
+      },
+      required: ["start_date", "end_date"],
+    },
+  },
 ];
 
 /**
@@ -192,6 +277,33 @@ export async function handleReportTool(
       };
 
       const report = await client.get("reports/CustomerSales", params);
+      return {
+        content: [{ type: "text", text: JSON.stringify(report, null, 2) }],
+      };
+    }
+
+    case "qbo_reports_cash_flow":
+    case "qbo_reports_trial_balance":
+    case "qbo_reports_general_ledger":
+    case "qbo_reports_vendor_expenses": {
+      const { start_date, end_date, accounting_method } = args as {
+        start_date: string;
+        end_date: string;
+        accounting_method?: string;
+      };
+      const params: Record<string, string> = { start_date, end_date };
+      if (accounting_method) params.accounting_method = accounting_method;
+      const report = await client.get(`reports/${datedReportEndpoints[name]}`, params);
+      return {
+        content: [{ type: "text", text: JSON.stringify(report, null, 2) }],
+      };
+    }
+
+    case "qbo_reports_customer_balance": {
+      const { report_date } = args as { report_date?: string };
+      const params: Record<string, string> = {};
+      if (report_date) params.report_date = report_date;
+      const report = await client.get("reports/CustomerBalance", params);
       return {
         content: [{ type: "text", text: JSON.stringify(report, null, 2) }],
       };

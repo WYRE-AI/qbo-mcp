@@ -25,13 +25,16 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 
-// Domain imports
-import { customerTools, handleCustomerTool } from "./domains/customers.js";
-import { invoiceTools, handleInvoiceTool } from "./domains/invoices.js";
+// Hand-written domains for tools that don't fit the entity-config pattern
 import { expenseTools, handleExpenseTool } from "./domains/expenses.js";
-import { paymentTools, handlePaymentTool } from "./domains/payments.js";
 import { reportTools, handleReportTool } from "./domains/reports.js";
-import { credentialStore } from "./utils/client.js";
+// Generated entities (Customer, Invoice, Payment) flow through this registry
+import {
+  allEntityTools,
+  dispatchTool,
+  entityDomains,
+} from "./entities/index.js";
+import { credentialStore, parseEnvironment, QboApiError } from "./utils/client.js";
 import { setServerRef } from "./utils/server-ref.js";
 
 /**
@@ -41,90 +44,40 @@ type TransportType = "stdio" | "http";
 type AuthMode = "env" | "gateway";
 
 /**
- * Available domains for navigation
+ * Domain catalog combining generator-driven entities (Customer, Invoice,
+ * Payment, ...) with hand-written domains (Expenses legacy naming, Reports).
+ * Used for qbo_navigate listings and to assemble the tools array.
  */
-type Domain =
-  | "customers"
-  | "invoices"
-  | "expenses"
-  | "payments"
-  | "reports";
-
-/**
- * Domain metadata for navigation
- */
-const domainDescriptions: Record<Domain, string> = {
-  customers:
-    "Customer management - list, get, create, and search customers",
-  invoices:
-    "Invoice management - list, get, create invoices and send them by email",
-  expenses:
-    "Expense tracking - list and view purchases and bills",
-  payments:
-    "Payment management - list, get, and create payments linked to invoices",
-  reports:
-    "Financial reports - profit & loss, balance sheet, aged receivables/payables, customer sales",
-};
-
-/**
- * Map from domain name to its tool definitions (loaded lazily)
- */
-const domainToolMap = new Map<Domain, Tool[]>();
-
-/**
- * All domain tools, collected once at startup
- */
-let allDomainTools: Tool[] | null = null;
-
-/**
- * Get tools for a specific domain
- */
-function getDomainTools(domain: Domain): Tool[] {
-  switch (domain) {
-    case "customers":
-      return customerTools;
-    case "invoices":
-      return invoiceTools;
-    case "expenses":
-      return expenseTools;
-    case "payments":
-      return paymentTools;
-    case "reports":
-      return reportTools;
-  }
+interface DomainInfo {
+  prefix: string;
+  description: string;
+  tools: Tool[];
 }
 
-/**
- * Load all domain tools (lazy-loaded on first access)
- */
-async function getAllDomainTools(): Promise<Tool[]> {
-  if (allDomainTools !== null) {
-    return allDomainTools;
-  }
+const handWrittenDomains: DomainInfo[] = [
+  {
+    prefix: "qbo_expenses",
+    description: "Expense tracking - list and view purchases and bills",
+    tools: expenseTools,
+  },
+  {
+    prefix: "qbo_reports",
+    description:
+      "Financial reports - profit & loss, balance sheet, aged receivables/payables, customer sales",
+    tools: reportTools,
+  },
+];
 
-  const domains: Domain[] = ["customers", "invoices", "expenses", "payments", "reports"];
-  const tools: Tool[] = [];
+const allDomains: DomainInfo[] = [...entityDomains, ...handWrittenDomains];
+const allTools: Tool[] = [...allEntityTools, ...expenseTools, ...reportTools];
 
-  for (const domain of domains) {
-    if (!domainToolMap.has(domain)) {
-      const domainTools = getDomainTools(domain);
-      domainToolMap.set(domain, domainTools);
-    }
-    tools.push(...domainToolMap.get(domain)!);
-  }
-
-  allDomainTools = tools;
-  return tools;
+/** Short domain name (e.g. "customers") derived from a tool prefix. */
+function shortName(prefix: string): string {
+  return prefix.replace(/^qbo_/, "");
 }
 
-/**
- * Navigation / discovery tool - helps the LLM find the right tools
- *
- * This is a stateless helper that describes available tools for a domain.
- * All domain tools are always listed in tools/list regardless of navigation
- * state, because many MCP clients (claude.ai connectors, mcp-remote) only
- * fetch the tool list once and do not support notifications/tools/list_changed.
- */
+const domainShortNames: string[] = allDomains.map((d) => shortName(d.prefix));
+
 const navigateTool: Tool = {
   name: "qbo_navigate",
   description:
@@ -134,19 +87,10 @@ const navigateTool: Tool = {
     properties: {
       domain: {
         type: "string",
-        enum: [
-          "customers",
-          "invoices",
-          "expenses",
-          "payments",
-          "reports",
-        ],
-        description: `The domain to explore:
-- customers: ${domainDescriptions.customers}
-- invoices: ${domainDescriptions.invoices}
-- expenses: ${domainDescriptions.expenses}
-- payments: ${domainDescriptions.payments}
-- reports: ${domainDescriptions.reports}`,
+        enum: domainShortNames,
+        description: `The domain to explore:\n${allDomains
+          .map((d) => `- ${shortName(d.prefix)}: ${d.description}`)
+          .join("\n")}`,
       },
     },
     required: ["domain"],
@@ -186,8 +130,7 @@ setServerRef(server);
  * Handle ListTools requests - always returns ALL tools
  */
 server.setRequestHandler(ListToolsRequestSchema, async () => {
-  const domainTools = await getAllDomainTools();
-  return { tools: [navigateTool, statusTool, ...domainTools] };
+  return { tools: [navigateTool, statusTool, ...allTools] };
 });
 
 /**
@@ -197,74 +140,67 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   try {
-    // Handle navigation / discovery helper
     if (name === "qbo_navigate") {
-      const { domain } = args as { domain: Domain };
-
-      if (!["customers", "invoices", "expenses", "payments", "reports"].includes(domain)) {
+      const { domain } = args as { domain: string };
+      const match = allDomains.find((d) => shortName(d.prefix) === domain);
+      if (!match) {
         return {
           content: [
             {
               type: "text",
-              text: `Invalid domain: ${domain}. Available domains: customers, invoices, expenses, payments, reports`,
+              text: `Invalid domain: ${domain}. Available domains: ${domainShortNames.join(", ")}`,
             },
           ],
           isError: true,
         };
       }
-
-      const domainTools = getDomainTools(domain);
-      const toolSummary = domainTools
+      const toolSummary = match.tools
         .map((t) => `- ${t.name}: ${t.description}`)
         .join("\n");
-
       return {
         content: [
           {
             type: "text",
-            text: `${domainDescriptions[domain]}\n\nAvailable tools:\n${toolSummary}\n\nYou can call any of these tools directly.`,
+            text: `${match.description}\n\nAvailable tools:\n${toolSummary}\n\nYou can call any of these tools directly.`,
           },
         ],
       };
     }
 
     if (name === "qbo_status") {
-      const accessToken = process.env.QBO_ACCESS_TOKEN;
-      const realmId = process.env.QBO_REALM_ID;
-      const credStatus = (accessToken && realmId)
-        ? `Configured (realm: ${realmId})`
-        : "NOT CONFIGURED - Please set environment variables";
-
+      const override = credentialStore.getStore();
+      const accessToken = override?.accessToken ?? process.env.QBO_ACCESS_TOKEN;
+      const realmId = override?.realmId ?? process.env.QBO_REALM_ID;
+      const environment =
+        override?.environment ?? parseEnvironment(process.env.QBO_ENV);
+      const credStatus =
+        accessToken && realmId
+          ? `Configured (realm: ${realmId}, environment: ${environment})`
+          : "NOT CONFIGURED - Please set credentials (env vars or gateway headers)";
       return {
         content: [
           {
             type: "text",
-            text: `QuickBooks Online MCP Server Status\n\nCredentials: ${credStatus}\nAvailable domains: customers, invoices, expenses, payments, reports\n\nAll tools are available at all times. Use qbo_navigate to discover tools by domain.`,
+            text: `QuickBooks Online MCP Server Status\n\nCredentials: ${credStatus}\nAvailable domains: ${domainShortNames.join(", ")}\n\nAll tools are available at all times. Use qbo_navigate to discover tools by domain.`,
           },
         ],
       };
     }
 
-    // Route to appropriate domain handler
     const toolArgs = (args ?? {}) as Record<string, unknown>;
 
-    if (name.startsWith("qbo_customers_")) {
-      return await handleCustomerTool(name, toolArgs);
-    }
-    if (name.startsWith("qbo_invoices_")) {
-      return await handleInvoiceTool(name, toolArgs);
-    }
+    // Generator-driven entities (Customer, Invoice, Payment, ...)
+    const entityResult = await dispatchTool(name, toolArgs);
+    if (entityResult) return entityResult;
+
+    // Hand-written domains
     if (name.startsWith("qbo_expenses_")) {
       return await handleExpenseTool(name, toolArgs);
-    }
-    if (name.startsWith("qbo_payments_")) {
-      return await handlePaymentTool(name, toolArgs);
     }
     if (name.startsWith("qbo_reports_")) {
       return await handleReportTool(name, toolArgs);
     }
 
-    // Unknown tool
     return {
       content: [
         {
@@ -275,6 +211,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       isError: true,
     };
   } catch (error) {
+    // Tag 401s structurally so a gateway can detect "refresh and retry". The
+    // message starts with a stable prefix and the body is preserved verbatim.
+    if (error instanceof QboApiError && error.isUnauthorized) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `QBO_UNAUTHORIZED: access token rejected by QuickBooks Online (realm may also be wrong). Gateway should refresh the OAuth token and retry. Upstream body: ${error.body}`,
+          },
+        ],
+        isError: true,
+      };
+    }
     const message = error instanceof Error ? error.message : String(error);
     return {
       content: [{ type: "text", text: `Error: ${message}` }],
@@ -338,6 +287,21 @@ async function startHttpTransport(): Promise<void> {
           const realmId = req.headers["x-qbo-realm-id"] as
             | string
             | undefined;
+          let environment: ReturnType<typeof parseEnvironment>;
+          try {
+            environment = parseEnvironment(
+              req.headers["x-qbo-environment"] as string | undefined
+            );
+          } catch (err) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(
+              JSON.stringify({
+                error: "Invalid X-Qbo-Environment header",
+                message: err instanceof Error ? err.message : String(err),
+              })
+            );
+            return;
+          }
 
           if (!accessToken || !realmId) {
             console.error(
@@ -350,6 +314,7 @@ async function startHttpTransport(): Promise<void> {
                 message:
                   "Gateway mode requires X-Qbo-Access-Token and X-Qbo-Realm-Id headers",
                 required: ["X-Qbo-Access-Token", "X-Qbo-Realm-Id"],
+                optional: ["X-Qbo-Environment (production|sandbox, default production)"],
               })
             );
             return;
@@ -358,7 +323,7 @@ async function startHttpTransport(): Promise<void> {
           // Run the MCP handler within an AsyncLocalStorage context so that
           // getClient() picks up these credentials without mutating process.env.
           // This prevents concurrent requests from overwriting each other's creds.
-          credentialStore.run({ accessToken, realmId }, () => {
+          credentialStore.run({ accessToken, realmId, environment }, () => {
             transport.handleRequest(req, res);
           });
           return;

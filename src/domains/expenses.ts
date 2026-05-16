@@ -4,6 +4,7 @@
 
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { getClient } from "../utils/client.js";
+import { buildDatedListSql, type DatedListArgs } from "../utils/qbo-sql.js";
 
 /**
  * Expense domain tool definitions
@@ -110,58 +111,18 @@ export async function handleExpenseTool(
 
   switch (name) {
     case "qbo_expenses_list_purchases": {
-      const { startPosition = 1, maxResults = 100, startDate, endDate } =
-        args as {
-          startPosition?: number;
-          maxResults?: number;
-          startDate?: string;
-          endDate?: string;
-        };
-
-      const conditions: string[] = [];
-      if (startDate) {
-        conditions.push(`TxnDate >= '${startDate}'`);
-      }
-      if (endDate) {
-        conditions.push(`TxnDate <= '${endDate}'`);
-      }
-
-      let sql = "SELECT * FROM Purchase";
-      if (conditions.length > 0) {
-        sql += ` WHERE ${conditions.join(" AND ")}`;
-      }
-      sql += ` STARTPOSITION ${startPosition} MAXRESULTS ${maxResults}`;
-
-      const response = await client.query(sql);
+      const response = await client.query(
+        buildDatedListSql("Purchase", args as DatedListArgs)
+      );
       return {
         content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
       };
     }
 
     case "qbo_expenses_list_bills": {
-      const { startPosition = 1, maxResults = 100, startDate, endDate } =
-        args as {
-          startPosition?: number;
-          maxResults?: number;
-          startDate?: string;
-          endDate?: string;
-        };
-
-      const conditions: string[] = [];
-      if (startDate) {
-        conditions.push(`TxnDate >= '${startDate}'`);
-      }
-      if (endDate) {
-        conditions.push(`TxnDate <= '${endDate}'`);
-      }
-
-      let sql = "SELECT * FROM Bill";
-      if (conditions.length > 0) {
-        sql += ` WHERE ${conditions.join(" AND ")}`;
-      }
-      sql += ` STARTPOSITION ${startPosition} MAXRESULTS ${maxResults}`;
-
-      const response = await client.query(sql);
+      const response = await client.query(
+        buildDatedListSql("Bill", args as DatedListArgs)
+      );
       return {
         content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
       };

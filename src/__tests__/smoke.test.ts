@@ -1,45 +1,48 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from "vitest";
 
-describe('qbo-mcp', () => {
-  it('should export domain tools', async () => {
-    const customers = await import('../domains/customers.js');
-    const invoices = await import('../domains/invoices.js');
-    const expenses = await import('../domains/expenses.js');
-    const payments = await import('../domains/payments.js');
-    const reports = await import('../domains/reports.js');
+describe("qbo-mcp", () => {
+  it("exposes tools from every registered domain", async () => {
+    const { allEntityTools } = await import("../entities/index.js");
+    const { expenseTools } = await import("../domains/expenses.js");
+    const { reportTools } = await import("../domains/reports.js");
 
-    expect(customers.customerTools.length).toBeGreaterThan(0);
-    expect(invoices.invoiceTools.length).toBeGreaterThan(0);
-    expect(expenses.expenseTools.length).toBeGreaterThan(0);
-    expect(payments.paymentTools.length).toBeGreaterThan(0);
-    expect(reports.reportTools.length).toBeGreaterThan(0);
+    expect(allEntityTools.length).toBeGreaterThan(0);
+    expect(expenseTools.length).toBeGreaterThan(0);
+    expect(reportTools.length).toBeGreaterThan(0);
   });
 
-  it('should have unique tool names', async () => {
-    const customers = await import('../domains/customers.js');
-    const invoices = await import('../domains/invoices.js');
-    const expenses = await import('../domains/expenses.js');
-    const payments = await import('../domains/payments.js');
-    const reports = await import('../domains/reports.js');
+  it("has unique tool names across the merged surface", async () => {
+    const { allEntityTools } = await import("../entities/index.js");
+    const { expenseTools } = await import("../domains/expenses.js");
+    const { reportTools } = await import("../domains/reports.js");
 
-    const allTools = [
-      ...customers.customerTools,
-      ...invoices.invoiceTools,
-      ...expenses.expenseTools,
-      ...payments.paymentTools,
-      ...reports.reportTools,
+    const names = [
+      ...allEntityTools.map((t) => t.name),
+      ...expenseTools.map((t) => t.name),
+      ...reportTools.map((t) => t.name),
     ];
-    const names = allTools.map((t) => t.name);
     expect(new Set(names).size).toBe(names.length);
   });
 
-  it('should have flattened navigation (all tools always available)', async () => {
-    // Import the server module to test getAllDomainTools
-    const serverModule = await import('../index.js');
-
-    // This test verifies that the navigation is flattened -
-    // all tools are always available without needing to "navigate" first.
-    // The index module should export all tools from all domains.
-    expect(serverModule).toBeDefined();
+  it("preserves the pre-migration tool names for Customer/Invoice/Payment", async () => {
+    // Backwards compatibility: callers (gateway, claude.ai connectors) have
+    // these names cached; renames here would break them.
+    const { allEntityTools } = await import("../entities/index.js");
+    const names = new Set(allEntityTools.map((t) => t.name));
+    for (const expected of [
+      "qbo_customers_list",
+      "qbo_customers_get",
+      "qbo_customers_create",
+      "qbo_customers_search",
+      "qbo_invoices_list",
+      "qbo_invoices_get",
+      "qbo_invoices_create",
+      "qbo_invoices_send",
+      "qbo_payments_list",
+      "qbo_payments_get",
+      "qbo_payments_create",
+    ]) {
+      expect(names, `missing tool ${expected}`).toContain(expected);
+    }
   });
 });

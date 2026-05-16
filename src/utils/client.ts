@@ -5,15 +5,21 @@
  * The client does NOT handle OAuth flows -- in gateway mode the gateway passes
  * a pre-authenticated access token; in env mode the user provides tokens directly.
  *
- * Base URL: https://quickbooks.api.intuit.com/v3/company/{realmId}/
+ * Production base URL: https://quickbooks.api.intuit.com/v3/company/{realmId}/
+ * Sandbox base URL:    https://sandbox-quickbooks.api.intuit.com/v3/company/{realmId}/
  * All requests include minorversion=73 query parameter.
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
 
-const QBO_API_BASE = "https://quickbooks.api.intuit.com/v3/company";
+const QBO_API_HOSTS = {
+  production: "https://quickbooks.api.intuit.com",
+  sandbox: "https://sandbox-quickbooks.api.intuit.com",
+} as const;
 const MINOR_VERSION = "73";
 const MAX_PAGE_SIZE = 1000;
+
+export type QboEnvironment = "production" | "sandbox";
 
 /**
  * Configuration for the QBO client
@@ -21,6 +27,7 @@ const MAX_PAGE_SIZE = 1000;
 interface QboClientConfig {
   accessToken: string;
   realmId: string;
+  environment: QboEnvironment;
 }
 
 /**
@@ -28,6 +35,31 @@ interface QboClientConfig {
  */
 interface QboQueryResponse {
   QueryResponse: Record<string, unknown>;
+}
+
+/**
+ * Structured error thrown by the REST client when QBO returns non-2xx. The
+ * gateway uses `status === 401` to decide whether to refresh the access token
+ * and retry the request.
+ */
+export class QboApiError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly method: string,
+    public readonly path: string,
+    public readonly body: string
+  ) {
+    super(`QBO API error ${method} /${path} (${status}): ${body}`);
+    this.name = "QboApiError";
+  }
+
+  /**
+   * True when QBO rejected the access token. The gateway should refresh and
+   * retry; other 4xx codes are caller errors and should surface as-is.
+   */
+  get isUnauthorized(): boolean {
+    return this.status === 401;
+  }
 }
 
 /**
@@ -39,7 +71,7 @@ class QboClient {
 
   constructor(config: QboClientConfig) {
     this.config = config;
-    this.baseUrl = `${QBO_API_BASE}/${config.realmId}`;
+    this.baseUrl = `${QBO_API_HOSTS[config.environment]}/v3/company/${config.realmId}`;
   }
 
   /**
@@ -74,9 +106,7 @@ class QboClient {
 
     if (!response.ok) {
       const responseBody = await response.text();
-      throw new Error(
-        `QBO API error ${method} /${path} (${response.status}): ${responseBody}`
-      );
+      throw new QboApiError(response.status, method, path, responseBody);
     }
 
     // Handle 204 No Content
@@ -130,7 +160,6 @@ class QboClient {
       const response = (await this.query(paginatedSql)) as QboQueryResponse;
 
       if (response.QueryResponse) {
-        // The entity array key varies (Customer, Invoice, etc.) - grab the first array value
         const entities = Object.values(response.QueryResponse).find(
           (v) => Array.isArray(v)
         ) as unknown[] | undefined;
@@ -162,9 +191,26 @@ class QboClient {
 export interface QboCredentials {
   accessToken: string;
   realmId: string;
+  environment: QboEnvironment;
 }
 
 export const credentialStore = new AsyncLocalStorage<QboCredentials>();
+
+/**
+ * Parse a QBO environment string, defaulting to production. Accepts both
+ * "production"/"prod" and "sandbox"/"sbx" for header convenience. Throws on
+ * any other non-empty value so a stray `X-Qbo-Environment: staging` header
+ * fails loudly rather than silently routing to production.
+ */
+export function parseEnvironment(value: string | undefined): QboEnvironment {
+  if (!value) return "production";
+  const normalized = value.toLowerCase();
+  if (normalized === "sandbox" || normalized === "sbx") return "sandbox";
+  if (normalized === "production" || normalized === "prod") return "production";
+  throw new Error(
+    `Invalid QBO environment ${JSON.stringify(value)}: expected "production" or "sandbox"`
+  );
+}
 
 /**
  * Singleton client instance (lazy-loaded, used only in stdio/env mode)
@@ -183,22 +229,28 @@ export function getClient(): QboClient {
   // Prefer per-request credentials from AsyncLocalStorage (gateway mode)
   const override = credentialStore.getStore();
   if (override) {
-    return new QboClient({ accessToken: override.accessToken, realmId: override.realmId });
+    return new QboClient({
+      accessToken: override.accessToken,
+      realmId: override.realmId,
+      environment: override.environment,
+    });
   }
 
   // Stdio / env mode: use singleton
   if (!_client) {
     const accessToken = process.env.QBO_ACCESS_TOKEN;
     const realmId = process.env.QBO_REALM_ID;
+    const environment = parseEnvironment(process.env.QBO_ENV);
 
     if (!accessToken || !realmId) {
       throw new Error(
         "QBO_ACCESS_TOKEN and QBO_REALM_ID environment variables are required. " +
-          "Provide a pre-authenticated OAuth2 access token and company realm ID."
+          "Provide a pre-authenticated OAuth2 access token and company realm ID. " +
+          "Optionally set QBO_ENV=sandbox to target the sandbox API."
       );
     }
 
-    _client = new QboClient({ accessToken, realmId });
+    _client = new QboClient({ accessToken, realmId, environment });
   }
   return _client;
 }
