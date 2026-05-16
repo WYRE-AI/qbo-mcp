@@ -116,7 +116,8 @@ export const invoiceExtras: EntityExtras = {
   handlers: {
     qbo_invoices_list: async (args) => {
       const rawArgs = args as DatedListArgs & { status?: string };
-      let { status, startDate, endDate } = rawArgs;
+      const { status } = rawArgs;
+      let { startDate, endDate } = rawArgs;
 
       if (!status && !startDate && !endDate && Object.keys(args).length === 0) {
         const from = await elicitText(
