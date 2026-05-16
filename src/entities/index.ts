@@ -39,7 +39,7 @@ import { taxCodeConfig } from "./tax-code.js";
 import { taxRateConfig } from "./tax-rate.js";
 import { employeeConfig } from "./employee.js";
 import { companyInfoConfig } from "./company-info.js";
-import { attachableConfig } from "./attachable.js";
+import { attachableConfig, attachableExtras } from "./attachable.js";
 
 interface RegistryEntry {
   config: EntityConfig;
@@ -85,7 +85,7 @@ const registry: RegistryEntry[] = [
   makeEntry(taxRateConfig),
   makeEntry(employeeConfig),
   makeEntry(companyInfoConfig),
-  makeEntry(attachableConfig),
+  makeEntry(attachableConfig, attachableExtras),
 ];
 
 export const allEntityTools: Tool[] = registry.flatMap((e) => e.tools);
