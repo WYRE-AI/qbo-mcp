@@ -15,7 +15,6 @@
  */
 
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
-import { randomUUID } from "node:crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -251,8 +250,18 @@ async function startHttpTransport(): Promise<void> {
   const authMode = (process.env.AUTH_MODE as AuthMode) || "env";
   const isGatewayMode = authMode === "gateway";
 
+  // Stateless transport: sessionIdGenerator is undefined on purpose. qbo-mcp
+  // holds no per-session state — every request carries its own credentials
+  // (X-Qbo-* headers in gateway mode, env vars otherwise) and is handled
+  // independently. A stateful transport (sessionIdGenerator set) would issue
+  // an Mcp-Session-Id on `initialize` and require it on every later call;
+  // since this server reuses ONE shared transport rather than one per
+  // session, that mode breaks re-initialization — the gateway's handshake
+  // got "Bad Request: Mcp-Session-Id header is required" / 400 on every
+  // tool call. Stateless is both correct here and what a single shared
+  // transport supports.
   const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: () => randomUUID(),
+    sessionIdGenerator: undefined,
     enableJsonResponse: true,
   });
 
