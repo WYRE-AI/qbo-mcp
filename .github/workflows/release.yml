@@ -164,11 +164,17 @@ jobs:
 
       - name: Deploy to Azure Container Apps
         run: |
+          # The gateway's vendor sidecars are named gwp-<slug> (gateway Bicep:
+          # vendorPrefix='gwp', app name '${vendorPrefix}-${slug}'). The gateway
+          # routes QBO to http://gwp-qbo via VENDOR_URL_QBO, so this MUST deploy
+          # to gwp-qbo. It previously targeted mcpgw-prod-qbo — an orphan app
+          # nothing routed to, so every release silently deployed into a void
+          # while the gateway kept serving a stale image.
           SHORT_SHA="${GITHUB_SHA::7}"
           IMAGE="ghcr.io/${{ github.repository }}:latest"
-          echo "Deploying $IMAGE to mcpgw-prod-qbo (revision tag sha-${SHORT_SHA}-${GITHUB_RUN_ID})"
+          echo "Deploying $IMAGE to gwp-qbo (revision tag sha-${SHORT_SHA}-${GITHUB_RUN_ID})"
           az containerapp update \
-            --name mcpgw-prod-qbo \
+            --name gwp-qbo \
             --resource-group mcp-gateway-prod \
             --image "$IMAGE" \
             --set-env-vars "IMAGE_VERSION=sha-${SHORT_SHA}-${GITHUB_RUN_ID}"
