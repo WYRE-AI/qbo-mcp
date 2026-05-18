@@ -91,15 +91,21 @@ class QboClient {
     });
     url += `?${searchParams.toString()}`;
 
+    // QBO's /query endpoint expects the raw SQL string with
+    // Content-Type: application/text — it rejects application/json with
+    // "Unsupported Operation ... expects application/text". Every other
+    // endpoint takes a JSON entity body. So: a string body is sent
+    // verbatim as application/text; an object body is JSON-encoded.
+    const isTextBody = typeof body === "string";
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.config.accessToken}`,
-      "Content-Type": "application/json",
+      "Content-Type": isTextBody ? "application/text" : "application/json",
       Accept: "application/json",
     };
 
     const options: RequestInit = { method, headers };
     if (body !== undefined) {
-      options.body = JSON.stringify(body);
+      options.body = isTextBody ? (body as string) : JSON.stringify(body);
     }
 
     const response = await fetch(url, options);
