@@ -1,8 +1,25 @@
 name: integration
 
-# Real-API integration tests against a QBO sandbox company. Gated on the
-# QBO_SANDBOX_* repo secrets being present so dependabot / fork PRs (which
-# can't see secrets) don't fail.
+# Real-API integration tests against a QBO sandbox company.
+#
+# QBO access tokens expire after 1 hour, so a static access-token secret is
+# useless for CI. Instead the repo stores the long-lived (~100-day) refresh
+# token + the OAuth app's client_id/secret, and this workflow exchanges them
+# for a fresh access token at job start.
+#
+# Required repo secrets (all four needed for the suite to run):
+#   QBO_SANDBOX_CLIENT_ID      - Intuit OAuth app client id
+#   QBO_SANDBOX_CLIENT_SECRET  - Intuit OAuth app client secret
+#   QBO_SANDBOX_REFRESH_TOKEN  - refresh token for the sandbox company
+#   QBO_SANDBOX_REALM_ID       - sandbox company realm id
+# Optional:
+#   QBO_CI_SECRETS_PAT - PAT with secrets:write. Lets the workflow persist the
+#     rotated refresh token (Intuit rotates it ~every 24h). Without it the
+#     suite still runs, but the stored refresh token will eventually go stale
+#     and need a manual reseed.
+#
+# When the four required secrets are absent (dependabot / fork PRs) the suite
+# is skipped with a notice rather than failing.
 
 on:
   push:
@@ -29,14 +46,70 @@ jobs:
 
       - run: npm run build
 
-      - name: Run sandbox integration tests
+      - name: Detect QBO sandbox secrets
         env:
-          QBO_SANDBOX_ACCESS_TOKEN: ${{ secrets.QBO_SANDBOX_ACCESS_TOKEN }}
-          QBO_SANDBOX_REALM_ID: ${{ secrets.QBO_SANDBOX_REALM_ID }}
+          CLIENT_ID: ${{ secrets.QBO_SANDBOX_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.QBO_SANDBOX_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.QBO_SANDBOX_REFRESH_TOKEN }}
+          REALM_ID: ${{ secrets.QBO_SANDBOX_REALM_ID }}
         run: |
-          if [ -z "$QBO_SANDBOX_ACCESS_TOKEN" ] || [ -z "$QBO_SANDBOX_REALM_ID" ]; then
-            echo "::notice::QBO sandbox credentials not configured; integration tests skipped."
-            echo "::notice::To enable, set the QBO_SANDBOX_ACCESS_TOKEN and QBO_SANDBOX_REALM_ID repo secrets."
+          if [ -n "$CLIENT_ID" ] && [ -n "$CLIENT_SECRET" ] \
+             && [ -n "$REFRESH_TOKEN" ] && [ -n "$REALM_ID" ]; then
+            echo "HAS_QBO_SECRETS=true" >> "$GITHUB_ENV"
+          else
+            echo "HAS_QBO_SECRETS=false" >> "$GITHUB_ENV"
+            echo "::notice::QBO sandbox credentials not configured; integration tests skipped. Set QBO_SANDBOX_CLIENT_ID, QBO_SANDBOX_CLIENT_SECRET, QBO_SANDBOX_REFRESH_TOKEN and QBO_SANDBOX_REALM_ID to enable."
+          fi
+
+      - name: Mint a fresh QBO access token
+        if: env.HAS_QBO_SECRETS == 'true'
+        env:
+          CLIENT_ID: ${{ secrets.QBO_SANDBOX_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.QBO_SANDBOX_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.QBO_SANDBOX_REFRESH_TOKEN }}
+        run: |
+          # Exchange the long-lived refresh token for a 1-hour access token.
+          resp=$(curl -sS -X POST https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer \
+            -u "$CLIENT_ID:$CLIENT_SECRET" \
+            -H 'Accept: application/json' \
+            -H 'Content-Type: application/x-www-form-urlencoded' \
+            --data-urlencode grant_type=refresh_token \
+            --data-urlencode "refresh_token=$REFRESH_TOKEN")
+          access_token=$(echo "$resp" | jq -r '.access_token // empty')
+          new_refresh=$(echo "$resp" | jq -r '.refresh_token // empty')
+          if [ -z "$access_token" ]; then
+            echo "::error::QBO token refresh failed: $(echo "$resp" | jq -rc '{error, error_description}')"
+            exit 1
+          fi
+          echo "::add-mask::$access_token"
+          [ -n "$new_refresh" ] && echo "::add-mask::$new_refresh"
+          echo "QBO_FRESH_ACCESS_TOKEN=$access_token" >> "$GITHUB_ENV"
+          echo "QBO_NEW_REFRESH_TOKEN=$new_refresh" >> "$GITHUB_ENV"
+
+      - name: Run sandbox integration tests
+        if: env.HAS_QBO_SECRETS == 'true'
+        env:
+          QBO_SANDBOX_ACCESS_TOKEN: ${{ env.QBO_FRESH_ACCESS_TOKEN }}
+          QBO_SANDBOX_REALM_ID: ${{ secrets.QBO_SANDBOX_REALM_ID }}
+        run: npm run test:integration
+
+      - name: Persist rotated refresh token
+        # Run even if the tests failed: the token may still have rotated and a
+        # stale stored token would break the next run regardless.
+        if: always() && env.HAS_QBO_SECRETS == 'true' && env.QBO_NEW_REFRESH_TOKEN != ''
+        env:
+          GH_TOKEN: ${{ secrets.QBO_CI_SECRETS_PAT }}
+          OLD_REFRESH: ${{ secrets.QBO_SANDBOX_REFRESH_TOKEN }}
+          NEW_REFRESH: ${{ env.QBO_NEW_REFRESH_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "$NEW_REFRESH" = "$OLD_REFRESH" ]; then
+            echo "Refresh token unchanged — nothing to persist."
             exit 0
           fi
-          npm run test:integration
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::Refresh token rotated but QBO_CI_SECRETS_PAT is not set — cannot persist it. The stored token will eventually go stale; set the PAT or reseed QBO_SANDBOX_REFRESH_TOKEN manually."
+            exit 0
+          fi
+          printf '%s' "$NEW_REFRESH" | gh secret set QBO_SANDBOX_REFRESH_TOKEN --repo "$REPO"
+          echo "::notice::QBO_SANDBOX_REFRESH_TOKEN rotated and persisted."
