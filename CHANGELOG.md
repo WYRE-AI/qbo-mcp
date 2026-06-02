@@ -24,6 +24,9 @@ manually maintained on feature branches and gets folded into the next release.
 
 ### Changed
 
+- Publish the package to the GitHub Packages npm registry
+  (`npm.pkg.github.com`) on release: `@semantic-release/npm` `npmPublish`
+  enabled and `publishConfig.registry` set.
 - Customer/Invoice/Payment migrated from hand-written domain modules to
   declarative entity configs. Tool names preserved for backwards compat.
 - `qbo_navigate` is now data-driven from the merged entity + domain
@@ -37,6 +40,14 @@ manually maintained on feature branches and gets folded into the next release.
   break out of the surrounding quotes or silently broaden the match.
 - `parseEnvironment` now fails loudly on unrecognized values instead of
   silently defaulting to production.
+
+### Documentation
+
+- Clarify the one-click "Deploy to Cloudflare Workers" / "Deploy to
+  DigitalOcean" flow: this server depends only on public npm packages, so
+  the cloud builders install without any registry token. Installing the
+  published package from GitHub Packages does require a GitHub PAT with
+  `read:packages` (`export NODE_AUTH_TOKEN=$(gh auth token)`).
 
 ## [1.1.3](https://github.com/wyre-technology/qbo-mcp/compare/v1.1.2...v1.1.3) (2026-04-07)
 
