@@ -4,3 +4,6 @@ dist/
 .env
 .mcpb-staging/
 *.mcpb
+
+# Cloudflare Wrangler
+.wrangler/
