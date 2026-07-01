@@ -29,18 +29,77 @@ import {
 type TransportType = "stdio" | "http";
 type AuthMode = "env" | "gateway";
 
-// Single shared server instance. It is credential-agnostic — every request
-// resolves its own credentials via credentialStore (gateway) or process.env
-// (env), so one instance can serve all transports/requests.
-const server = createMcpServer();
-
 /**
- * Start the server with stdio transport (default)
+ * Start the server with stdio transport (default).
+ *
+ * stdio is inherently single-client, so one shared server is correct here.
  */
 async function startStdioTransport(): Promise<void> {
+  const server = createMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("QBO MCP server running on stdio");
+}
+
+/**
+ * Handle a single MCP request over HTTP with a fresh Server + Transport.
+ *
+ * qbo-mcp holds no per-session state — every request carries its own
+ * credentials (X-Qbo-* headers in gateway mode, env vars otherwise) and is
+ * handled independently, so a stateless per-request server + transport is the
+ * correct model (and mirrors the Cloudflare Worker entrypoint in worker.ts).
+ *
+ * A single shared transport reused across requests breaks under
+ * @modelcontextprotocol/sdk >= 1.29: the first `initialize` returns 200 but
+ * every following POST (`notifications/initialized`, `tools/list`,
+ * `tools/call`) returns HTTP 500 with an empty body, so the HTTP transport
+ * lists/calls zero tools (issue #47). Building a fresh Server +
+ * StreamableHTTPServerTransport per request — and disposing both when the
+ * response closes — is the SDK's stateless pattern and fixes this.
+ */
+async function handleMcpRequest(
+  req: IncomingMessage,
+  res: ServerResponse
+): Promise<void> {
+  // This handler is invoked fire-and-forget (`void handleMcpRequest(...)`), so
+  // it must NEVER reject: qbo-mcp installs a global `unhandledRejection`
+  // handler that calls process.exit(1) (see below), which means a single bad
+  // /mcp request could otherwise crash the whole HTTP server. Everything —
+  // including server/transport construction and the error response itself — is
+  // wrapped so nothing escapes to that global handler.
+  try {
+    const server = createMcpServer();
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true,
+    });
+
+    res.on("close", () => {
+      void transport.close().catch(() => {});
+      void server.close().catch(() => {});
+    });
+
+    await server.connect(transport);
+    await transport.handleRequest(req, res);
+  } catch (err) {
+    console.error("Error handling MCP request:", err);
+    try {
+      if (!res.headersSent) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+      }
+      if (!res.writableEnded) {
+        res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: { code: -32603, message: "Internal error" },
+            id: null,
+          })
+        );
+      }
+    } catch {
+      // Response already torn down — nothing more we can safely do.
+    }
+  }
 }
 
 /**
@@ -52,21 +111,6 @@ async function startHttpTransport(): Promise<void> {
   const host = process.env.MCP_HTTP_HOST || "0.0.0.0";
   const authMode = (process.env.AUTH_MODE as AuthMode) || "env";
   const isGatewayMode = authMode === "gateway";
-
-  // Stateless transport: sessionIdGenerator is undefined on purpose. qbo-mcp
-  // holds no per-session state — every request carries its own credentials
-  // (X-Qbo-* headers in gateway mode, env vars otherwise) and is handled
-  // independently. A stateful transport (sessionIdGenerator set) would issue
-  // an Mcp-Session-Id on `initialize` and require it on every later call;
-  // since this server reuses ONE shared transport rather than one per
-  // session, that mode breaks re-initialization — the gateway's handshake
-  // got "Bad Request: Mcp-Session-Id header is required" / 400 on every
-  // tool call. Stateless is both correct here and what a single shared
-  // transport supports.
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined,
-    enableJsonResponse: true,
-  });
 
   const httpServer = createServer(
     (req: IncomingMessage, res: ServerResponse) => {
@@ -122,16 +166,15 @@ async function startHttpTransport(): Promise<void> {
             return;
           }
 
-          // Run the MCP handler within an AsyncLocalStorage context so that
-          // getClient() picks up these credentials without mutating process.env.
-          // This prevents concurrent requests from overwriting each other's creds.
-          credentialStore.run(creds, () => {
-            transport.handleRequest(req, res);
-          });
+          // Run the per-request MCP handler within an AsyncLocalStorage context
+          // so getClient() picks up these credentials without mutating
+          // process.env. This prevents concurrent requests from overwriting
+          // each other's creds.
+          credentialStore.run(creds, () => void handleMcpRequest(req, res));
           return;
         }
 
-        transport.handleRequest(req, res);
+        void handleMcpRequest(req, res);
         return;
       }
 
@@ -145,8 +188,6 @@ async function startHttpTransport(): Promise<void> {
       );
     }
   );
-
-  await server.connect(transport);
 
   await new Promise<void>((resolve) => {
     httpServer.listen(port, host, () => {
@@ -169,7 +210,6 @@ async function startHttpTransport(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       httpServer.close((err) => (err ? reject(err) : resolve()));
     });
-    await server.close();
     process.exit(0);
   };
 
