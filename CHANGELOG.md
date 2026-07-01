@@ -34,6 +34,17 @@ manually maintained on feature branches and gets folded into the next release.
 
 ### Fixed
 
+- **HTTP transport:** the Node `startHttpTransport()` reused ONE shared
+  `Server` + `StreamableHTTPServerTransport` for every `/mcp` request. Under
+  `@modelcontextprotocol/sdk` >= 1.29 the first `initialize` returned 200 but
+  every subsequent POST (`notifications/initialized`, `tools/list`,
+  `tools/call`) returned HTTP 500 with an empty body, so the HTTP transport
+  listed/called zero tools. Now builds a fresh `Server` + transport per
+  request (stateless), disposed when the response closes, mirroring the
+  Cloudflare Worker entrypoint. The per-request handler also never throws, so
+  a bad request can no longer trip the global `unhandledRejection` handler and
+  crash the server. Thanks @NextLevelManagementAdvisors for the report and
+  repro (#47).
 - **Security:** SQL-injection-style escapes on all user input flowing into
   QBO's `/query` endpoint (customer search, dated list filters). Previously
   a search term containing single quotes or LIKE wildcards (`%`, `_`) could
