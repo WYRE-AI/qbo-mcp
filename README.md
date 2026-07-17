@@ -2,6 +2,10 @@
 
 Model Context Protocol (MCP) server for the [QuickBooks Online Accounting API](https://developer.intuit.com/app/developer/qbo/docs/api/accounting/all-entities/account). Exposes 130+ tools across 22 QBO entities plus 10 financial reports for Claude and other MCP-compatible clients.
 
+## Features
+
+- **Interactive invoice card (MCP Apps, SEP-1865)**: `qbo_invoices_get` renders as a read-only interactive card in MCP Apps hosts (Claude Desktop/web) — customer, status, dates, line items, totals — neutral by default, brandable via `window.__BRAND__` injection or `MCP_BRAND_*` env vars. Non-App hosts see the same JSON payload (plus a `_card` field).
+
 ## One-Click Deployment
 
 [![Deploy to DO](https://www.deploytodo.com/do-btn-blue.svg)](https://cloud.digitalocean.com/apps/new?repo=https://github.com/wyre-technology/qbo-mcp/tree/main)
@@ -67,6 +71,12 @@ docker run -p 8080:8080 \
 | `MCP_HTTP_PORT` | No | `8080` | HTTP server port |
 | `MCP_HTTP_HOST` | No | `0.0.0.0` | HTTP server bind address |
 | `AUTH_MODE` | No | `env` | Auth mode: `env` or `gateway` |
+| `MCP_BRAND_NAME` | No | — | Brand name shown on the MCP Apps invoice card (card is neutral when unset) |
+| `MCP_BRAND_LOGO_URL` | No | — | Logo URL for the invoice card |
+| `MCP_BRAND_PRIMARY_COLOR` | No | `#2563eb` | Invoice card primary color |
+| `MCP_BRAND_ACCENT_COLOR` | No | `#e5e7eb` | Invoice card accent color |
+| `MCP_BRAND_BG` | No | `#ffffff` | Invoice card background color |
+| `MCP_BRAND_TEXT` | No | `#333333` | Invoice card text color |
 
 ## Authentication
 

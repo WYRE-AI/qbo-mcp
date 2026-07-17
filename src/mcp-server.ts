@@ -20,6 +20,9 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 
+// MCP Apps (SEP-1865) invoice card: _meta advertisement + ui:// resource
+import { INVOICE_CARD_META, INVOICE_CARD_TOOL } from "./card.builder.js";
+import { registerResourceHandlers } from "./resources.js";
 // Hand-written domains for tools that don't fit the entity-config pattern
 import { expenseTools, handleExpenseTool } from "./domains/expenses.js";
 import { reportTools, handleReportTool } from "./domains/reports.js";
@@ -67,6 +70,15 @@ const handWrittenDomains: DomainInfo[] = [
 
 const allDomains: DomainInfo[] = [...entityDomains, ...handWrittenDomains];
 const allTools: Tool[] = [...allEntityTools, ...expenseTools, ...reportTools];
+
+/**
+ * Tools as advertised by tools/list. qbo_invoices_get carries the MCP Apps
+ * `_meta` linking the ui:// invoice card; every other tool is unchanged.
+ * Exported for the MCP Apps contract tests.
+ */
+export const listedTools: Tool[] = allTools.map((t) =>
+  t.name === INVOICE_CARD_TOOL ? { ...t, _meta: { ...INVOICE_CARD_META } } : t,
+);
 
 /** Short domain name (e.g. "customers") derived from a tool prefix. */
 function shortName(prefix: string): string {
@@ -156,14 +168,16 @@ export function createMcpServer(): Server {
     {
       capabilities: {
         tools: {},
+        resources: {},
       },
     },
   );
 
   setServerRef(server);
+  registerResourceHandlers(server);
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    return { tools: [navigateTool, statusTool, ...allTools] };
+    return { tools: [navigateTool, statusTool, ...listedTools] };
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
