@@ -66,6 +66,10 @@ manually maintained on feature branches and gets folded into the next release.
   declarative entity configs. Tool names preserved for backwards compat.
 - `qbo_navigate` is now data-driven from the merged entity + domain
   registry; adding a new entity automatically updates the navigation enum.
+- Integration CI mints a fresh QBO access token from a stored refresh token
+  at job start instead of expecting a static `QBO_SANDBOX_ACCESS_TOKEN`
+  secret (access tokens expire after 1 hour). Rotated refresh tokens are
+  persisted back when a `QBO_CI_SECRETS_PAT` is configured.
 
 ### Fixed
 
