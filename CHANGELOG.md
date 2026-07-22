@@ -9,6 +9,41 @@ manually maintained on feature branches and gets folded into the next release.
 
 ### Added
 
+- **Interactive invoice card via MCP Apps (SEP-1865).** `qbo_invoices_get`
+  results now render as an interactive card in MCP Apps hosts (Claude
+  Desktop/web, and other hosts advertising the `io.modelcontextprotocol/ui`
+  extension) instead of a wall of JSON. The card shows the customer, derived
+  Paid/Unpaid/Overdue status, invoice/due dates, line items, totals, and
+  balance due — read-only by policy (no write round-trip). Non-App hosts are
+  unaffected: the tool's JSON payload is unchanged apart from a new `_card`
+  field.
+  - The card is **brand-neutral by default** (system fonts, neutral palette,
+    no baked-in identity — this is a published server) and brandable without
+    rebuilding: `MCP_BRAND_NAME`, `MCP_BRAND_LOGO_URL`,
+    `MCP_BRAND_PRIMARY_COLOR`, `MCP_BRAND_ACCENT_COLOR`, `MCP_BRAND_BG`, and
+    `MCP_BRAND_TEXT` env vars are injected as `window.__BRAND__` at serve time
+    (a gateway can inject the same object per-org). Tests pin the default
+    bundle to zero brand identity and zero external fetches.
+  - `qbo_invoices_get` advertises the UI via `_meta` (`ui/resourceUri`, plus
+    the nested `ui.resourceUri` form) pointing at a new
+    `ui://qbo/invoice-card.html` resource served as
+    `text/html;profile=mcp-app` through a net-new resources capability. The
+    card HTML is a self-contained vite single-file bundle embedded at build
+    time (`src/generated/invoice-card-html.ts`, committed), so it serves
+    identically from stdio, Node HTTP, and the fs-less Cloudflare Workers
+    runtime.
+  - Card normalization uses only labels QBO already resolves server-side
+    (`CustomerRef.name`, `ItemRef.name`) and derives status with the same
+    semantics as the `qbo_invoices_list` filter — no extra API lookups. The
+    builder is best-effort: any failure drops the card without affecting the
+    tool result. Contract tests in `src/__tests__/mcp-apps.test.ts` pin the
+    `_meta` advertisement, the `ui://` resource wire shape, brand injection
+    (incl. `<` escaping and empty-brand byte-identity), and the card
+    normalization.
+  - New `npm run build:ui` regenerates the embedded HTML after editing `ui/`
+    (requires the new `vite`, `vite-plugin-singlefile`, and
+    `@modelcontextprotocol/ext-apps` devDependencies); plain `npm run build`
+    and CI are unaffected.
 - 22 QBO entity coverage via a config-driven generator: Customer, Invoice,
   Payment + 19 new entities (Vendor, Item, Account, JournalEntry, Bill,
   BillPayment, VendorCredit, Purchase, PurchaseOrder, Estimate, SalesReceipt,
@@ -24,6 +59,9 @@ manually maintained on feature branches and gets folded into the next release.
 
 ### Changed
 
+- Publish the package to the GitHub Packages npm registry
+  (`npm.pkg.github.com`) on release: `@semantic-release/npm` `npmPublish`
+  enabled and `publishConfig.registry` set.
 - Customer/Invoice/Payment migrated from hand-written domain modules to
   declarative entity configs. Tool names preserved for backwards compat.
 - `qbo_navigate` is now data-driven from the merged entity + domain
@@ -37,12 +75,31 @@ manually maintained on feature branches and gets folded into the next release.
 
 ### Fixed
 
+- **HTTP transport:** the Node `startHttpTransport()` reused ONE shared
+  `Server` + `StreamableHTTPServerTransport` for every `/mcp` request. Under
+  `@modelcontextprotocol/sdk` >= 1.29 the first `initialize` returned 200 but
+  every subsequent POST (`notifications/initialized`, `tools/list`,
+  `tools/call`) returned HTTP 500 with an empty body, so the HTTP transport
+  listed/called zero tools. Now builds a fresh `Server` + transport per
+  request (stateless), disposed when the response closes, mirroring the
+  Cloudflare Worker entrypoint. The per-request handler also never throws, so
+  a bad request can no longer trip the global `unhandledRejection` handler and
+  crash the server. Thanks @NextLevelManagementAdvisors for the report and
+  repro (#47).
 - **Security:** SQL-injection-style escapes on all user input flowing into
   QBO's `/query` endpoint (customer search, dated list filters). Previously
   a search term containing single quotes or LIKE wildcards (`%`, `_`) could
   break out of the surrounding quotes or silently broaden the match.
 - `parseEnvironment` now fails loudly on unrecognized values instead of
   silently defaulting to production.
+
+### Documentation
+
+- Clarify the one-click "Deploy to Cloudflare Workers" / "Deploy to
+  DigitalOcean" flow: this server depends only on public npm packages, so
+  the cloud builders install without any registry token. Installing the
+  published package from GitHub Packages does require a GitHub PAT with
+  `read:packages` (`export NODE_AUTH_TOKEN=$(gh auth token)`).
 
 ## [1.1.3](https://github.com/wyre-technology/qbo-mcp/compare/v1.1.2...v1.1.3) (2026-04-07)
 

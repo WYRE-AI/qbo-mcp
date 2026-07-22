@@ -1,10 +1,12 @@
 /**
- * Invoice entity config. Generator handles get + create. List is overridden
- * for the Paid/Unpaid/Overdue status filter + date-range elicitation. Send
- * is a non-CRUD action (POST /invoice/:id/send).
+ * Invoice entity config. Generator handles get + create schemas. List is
+ * overridden for the Paid/Unpaid/Overdue status filter + date-range
+ * elicitation; the get handler is overridden to attach the MCP Apps `_card`
+ * payload. Send is a non-CRUD action (POST /invoice/:id/send).
  */
 
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { attachInvoiceCard } from "../card.builder.js";
 import { getClient } from "../utils/client.js";
 import { elicitText } from "../utils/elicitation.js";
 import {
@@ -114,6 +116,15 @@ const invoicesSendTool: Tool = {
 export const invoiceExtras: EntityExtras = {
   tools: [invoicesListTool, invoicesSendTool],
   handlers: {
+    qbo_invoices_get: async (args) => {
+      const { invoiceId } = args as { invoiceId: string };
+      const result = await getClient().get(`invoice/${invoiceId}`);
+      // MCP Apps: attach the normalized card payload the ui:// invoice card
+      // renders from. Best-effort — no card just means no UI surface, and
+      // the model-visible JSON is otherwise unchanged.
+      return jsonText(attachInvoiceCard(result));
+    },
+
     qbo_invoices_list: async (args) => {
       const rawArgs = args as DatedListArgs & { status?: string };
       const { status } = rawArgs;

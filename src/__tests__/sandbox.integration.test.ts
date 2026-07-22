@@ -92,7 +92,6 @@ describe.skipIf(!hasCreds)("QBO sandbox integration", () => {
     // src/domains/), so this branch will only fire if the test setup
     // wires reports through the same dispatcher.
     if (result === null) {
-      // eslint-disable-next-line no-console
       console.warn(
         "qbo_reports_balance_sheet not reachable via dispatchTool — reports use a separate handler. Skipping.",
       );

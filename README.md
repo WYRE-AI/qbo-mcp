@@ -2,11 +2,24 @@
 
 Model Context Protocol (MCP) server for the [QuickBooks Online Accounting API](https://developer.intuit.com/app/developer/qbo/docs/api/accounting/all-entities/account). Exposes 130+ tools across 22 QBO entities plus 10 financial reports for Claude and other MCP-compatible clients.
 
+## Features
+
+- **Interactive invoice card (MCP Apps, SEP-1865)**: `qbo_invoices_get` renders as a read-only interactive card in MCP Apps hosts (Claude Desktop/web) — customer, status, dates, line items, totals — neutral by default, brandable via `window.__BRAND__` injection or `MCP_BRAND_*` env vars. Non-App hosts see the same JSON payload (plus a `_card` field).
+
 ## One-Click Deployment
 
 [![Deploy to DO](https://www.deploytodo.com/do-btn-blue.svg)](https://cloud.digitalocean.com/apps/new?repo=https://github.com/wyre-technology/qbo-mcp/tree/main)
 
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/wyre-technology/qbo-mcp)
+
+> **Note on registry auth:** This server depends only on public npm packages, so the Cloudflare and DigitalOcean cloud builders install its dependencies anonymously — no token is required for one-click deploy. (If a future release adds a private `@wyre-technology/*` dependency, you would supply a GitHub PAT with `read:packages` as a build variable — `NODE_AUTH_TOKEN` for Cloudflare Workers, a build-time `GITHUB_TOKEN` secret for DigitalOcean.)
+>
+> **Installing the published package:** The released package is published to the [GitHub Packages](https://github.com/wyre-technology/qbo-mcp/pkgs/npm/qbo-mcp) npm registry, which requires authentication on every install (even for public packages). To install it, authenticate npm to `npm.pkg.github.com` with a GitHub PAT that has `read:packages`:
+>
+> ```bash
+> export NODE_AUTH_TOKEN=$(gh auth token)
+> npm install @wyre-technology/qbo-mcp
+> ```
 
 ## Quick Start
 
@@ -58,6 +71,12 @@ docker run -p 8080:8080 \
 | `MCP_HTTP_PORT` | No | `8080` | HTTP server port |
 | `MCP_HTTP_HOST` | No | `0.0.0.0` | HTTP server bind address |
 | `AUTH_MODE` | No | `env` | Auth mode: `env` or `gateway` |
+| `MCP_BRAND_NAME` | No | — | Brand name shown on the MCP Apps invoice card (card is neutral when unset) |
+| `MCP_BRAND_LOGO_URL` | No | — | Logo URL for the invoice card |
+| `MCP_BRAND_PRIMARY_COLOR` | No | `#2563eb` | Invoice card primary color |
+| `MCP_BRAND_ACCENT_COLOR` | No | `#e5e7eb` | Invoice card accent color |
+| `MCP_BRAND_BG` | No | `#ffffff` | Invoice card background color |
+| `MCP_BRAND_TEXT` | No | `#333333` | Invoice card text color |
 
 ## Authentication
 
