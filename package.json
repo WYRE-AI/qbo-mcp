@@ -28,7 +28,7 @@
     "validate:mcpb": "mcpb validate manifest.json"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.29.0"
+    "@modelcontextprotocol/sdk": "1.30.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
