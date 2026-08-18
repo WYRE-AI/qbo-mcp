@@ -9,6 +9,17 @@ manually maintained on feature branches and gets folded into the next release.
 
 ### Added
 
+- **`QBO_CREDENTIALS_FILE`: file-based token rotation without a container
+  recreate (#63).** In env mode, credentials frozen into the container
+  environment at creation meant a cron-rotated `.env` + `docker restart`
+  never took effect — the server kept the stale token until calls failed
+  with `QBO_UNAUTHORIZED` / `Token revoked`. `QBO_CREDENTIALS_FILE` now
+  names a dotenv-format file that is re-read on every request (its
+  `QBO_ACCESS_TOKEN` / `QBO_REALM_ID` / `QBO_ENV` override process env),
+  so rewriting the bind-mounted file is all a rotation needs. An unreadable
+  file fails loudly rather than silently falling back to a stale env token.
+  `qbo_status` reports credentials through the same resolution path.
+
 - **Interactive invoice card via MCP Apps (SEP-1865).** `qbo_invoices_get`
   results now render as an interactive card in MCP Apps hosts (Claude
   Desktop/web, and other hosts advertising the `io.modelcontextprotocol/ui`

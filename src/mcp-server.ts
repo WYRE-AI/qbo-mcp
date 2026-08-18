@@ -38,6 +38,7 @@ import {
   QboApiError,
   type QboCredentials,
 } from "./utils/client.js";
+import { resolveEnvCredentials } from "./utils/env-credentials.js";
 import { setServerRef } from "./utils/server-ref.js";
 
 export type { QboCredentials };
@@ -212,11 +213,15 @@ export function createMcpServer(): Server {
       }
 
       if (name === "qbo_status") {
+        // Same resolution order as getClient(): gateway headers, then the
+        // QBO_CREDENTIALS_FILE / process.env merge — so status reports the
+        // credentials tool calls will actually use.
         const override = credentialStore.getStore();
-        const accessToken = override?.accessToken ?? process.env.QBO_ACCESS_TOKEN;
-        const realmId = override?.realmId ?? process.env.QBO_REALM_ID;
+        const resolved = override ? undefined : resolveEnvCredentials();
+        const accessToken = override?.accessToken ?? resolved?.accessToken;
+        const realmId = override?.realmId ?? resolved?.realmId;
         const environment =
-          override?.environment ?? parseEnvironment(process.env.QBO_ENV);
+          override?.environment ?? parseEnvironment(resolved?.env);
         const credStatus =
           accessToken && realmId
             ? `Configured (realm: ${realmId}, environment: ${environment})`
