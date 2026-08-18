@@ -67,6 +67,7 @@ docker run -p 8080:8080 \
 | `QBO_ACCESS_TOKEN` | Yes (env mode) | — | QuickBooks Online OAuth2 access token |
 | `QBO_REALM_ID` | Yes (env mode) | — | QuickBooks Online company (realm) ID |
 | `QBO_ENV` | No | `production` | API environment: `production` or `sandbox` |
+| `QBO_CREDENTIALS_FILE` | No | — | Path to a dotenv-format file re-read on every request; its `QBO_ACCESS_TOKEN` / `QBO_REALM_ID` / `QBO_ENV` override the environment variables (see [Token rotation](#token-rotation-env-mode)) |
 | `MCP_TRANSPORT` | No | `stdio` | Transport type: `stdio` or `http` |
 | `MCP_HTTP_PORT` | No | `8080` | HTTP server port |
 | `MCP_HTTP_HOST` | No | `0.0.0.0` | HTTP server bind address |
@@ -82,7 +83,7 @@ docker run -p 8080:8080 \
 
 The server does not handle the OAuth flow — it consumes a pre-obtained access token. Two modes:
 
-**env mode (default).** Token comes from `QBO_ACCESS_TOKEN`. Single tenant.
+**env mode (default).** Token comes from `QBO_ACCESS_TOKEN` (or from the file named by `QBO_CREDENTIALS_FILE`, which wins when both are set). Single tenant.
 
 **gateway mode.** Token comes from per-request HTTP headers, isolated through `AsyncLocalStorage` so concurrent requests never share credentials. Set `AUTH_MODE=gateway` and send:
 
@@ -93,6 +94,28 @@ The server does not handle the OAuth flow — it consumes a pre-obtained access 
 | `X-Qbo-Environment` | No | `production` or `sandbox` (defaults to `production`) |
 
 When QBO rejects the access token, the server returns an MCP error whose text begins with the literal prefix `QBO_UNAUTHORIZED:`. The intended contract is that the gateway detects this prefix, refreshes the OAuth token, and retries the request.
+
+### Token rotation (env mode)
+
+QBO access tokens expire after ~60 minutes, so env-mode deployments typically rotate them with a cron job. **A rotated token in a Docker `env_file` never reaches a running container**: Docker injects `env_file` only at container *creation*, so `docker restart` keeps the old environment and the refresh loop silently becomes a no-op until calls start failing with `QBO_UNAUTHORIZED` / `Token revoked` (#63).
+
+Set `QBO_CREDENTIALS_FILE` to skip environment reinjection entirely. The server re-reads the file on every request, so a rotation takes effect immediately — no restart or recreate at all:
+
+```yaml
+# docker-compose.yml
+services:
+  qbo-mcp:
+    image: ghcr.io/wyre-technology/qbo-mcp
+    environment:
+      MCP_TRANSPORT: http
+      QBO_CREDENTIALS_FILE: /secrets/qbo.env
+    volumes:
+      - ./secrets:/secrets:ro   # mount the DIRECTORY, not the file
+```
+
+Your refresh job then just rewrites `./secrets/qbo.env` (dotenv format: `QBO_ACCESS_TOKEN=...`, optionally `QBO_REALM_ID=...` and `QBO_ENV=...`) and is done — drop the `docker restart` from the script. Mount the containing directory rather than the file itself: tools like `sed -i` replace the file's inode, and a single-file bind mount would keep pointing at the old one. If the file is missing or unreadable, tool calls fail loudly instead of silently falling back to a stale environment token.
+
+If you'd rather keep plain `env_file` injection, the rotation script must recreate the container — `docker compose up -d --force-recreate` — a `docker restart` is never enough.
 
 ## Sandbox Testing
 

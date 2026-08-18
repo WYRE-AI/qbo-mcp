@@ -12,6 +12,8 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 
+import { resolveEnvCredentials } from "./env-credentials.js";
+
 const QBO_API_HOSTS = {
   production: "https://quickbooks.api.intuit.com",
   sandbox: "https://sandbox-quickbooks.api.intuit.com",
@@ -242,14 +244,18 @@ export function parseEnvironment(value: string | undefined): QboEnvironment {
 }
 
 /**
- * Singleton client instance (lazy-loaded, used only in stdio/env mode)
+ * Cached client for stdio/env mode, keyed by the credentials it was built
+ * with so a rotated QBO_CREDENTIALS_FILE transparently produces a new client.
  */
 let _client: QboClient | null = null;
+let _clientKey: string | null = null;
 
 /**
  * Get or create the QBO client instance.
  * In gateway mode (AsyncLocalStorage has credentials), creates a fresh client per request.
- * In stdio/env mode, uses a lazy-loaded singleton.
+ * In stdio/env mode, credentials are re-resolved on every call (so a rotated
+ * QBO_CREDENTIALS_FILE takes effect immediately — issue #63) and the client is
+ * rebuilt only when they actually changed.
  *
  * @throws Error if credentials are not available
  * @returns The QboClient instance
@@ -265,21 +271,24 @@ export function getClient(): QboClient {
     });
   }
 
-  // Stdio / env mode: use singleton
-  if (!_client) {
-    const accessToken = process.env.QBO_ACCESS_TOKEN;
-    const realmId = process.env.QBO_REALM_ID;
-    const environment = parseEnvironment(process.env.QBO_ENV);
+  // Stdio / env mode
+  const resolved = resolveEnvCredentials();
+  const { accessToken, realmId } = resolved;
+  const environment = parseEnvironment(resolved.env);
 
-    if (!accessToken || !realmId) {
-      throw new Error(
-        "QBO_ACCESS_TOKEN and QBO_REALM_ID environment variables are required. " +
-          "Provide a pre-authenticated OAuth2 access token and company realm ID. " +
-          "Optionally set QBO_ENV=sandbox to target the sandbox API."
-      );
-    }
+  if (!accessToken || !realmId) {
+    throw new Error(
+      "QBO_ACCESS_TOKEN and QBO_REALM_ID are required: set them as environment " +
+        "variables, or in the dotenv-format file named by QBO_CREDENTIALS_FILE. " +
+        "Provide a pre-authenticated OAuth2 access token and company realm ID. " +
+        "Optionally set QBO_ENV=sandbox to target the sandbox API."
+    );
+  }
 
+  const key = `${accessToken} ${realmId} ${environment}`;
+  if (!_client || _clientKey !== key) {
     _client = new QboClient({ accessToken, realmId, environment });
+    _clientKey = key;
   }
   return _client;
 }
@@ -290,4 +299,5 @@ export function getClient(): QboClient {
  */
 export function resetClient(): void {
   _client = null;
+  _clientKey = null;
 }
