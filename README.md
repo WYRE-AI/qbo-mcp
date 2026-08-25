@@ -8,17 +8,17 @@ Model Context Protocol (MCP) server for the [QuickBooks Online Accounting API](h
 
 ## One-Click Deployment
 
-[![Deploy to DO](https://www.deploytodo.com/do-btn-blue.svg)](https://cloud.digitalocean.com/apps/new?repo=https://github.com/wyre-technology/qbo-mcp/tree/main)
+[![Deploy to DO](https://www.deploytodo.com/do-btn-blue.svg)](https://cloud.digitalocean.com/apps/new?repo=https://github.com/WYRE-AI/qbo-mcp/tree/main)
 
-[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/wyre-technology/qbo-mcp)
+[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/WYRE-AI/qbo-mcp)
 
-> **Note on registry auth:** This server depends only on public npm packages, so the Cloudflare and DigitalOcean cloud builders install its dependencies anonymously — no token is required for one-click deploy. (If a future release adds a private `@wyre-technology/*` dependency, you would supply a GitHub PAT with `read:packages` as a build variable — `NODE_AUTH_TOKEN` for Cloudflare Workers, a build-time `GITHUB_TOKEN` secret for DigitalOcean.)
+> **Note on registry auth:** This server depends only on public npm packages, so the Cloudflare and DigitalOcean cloud builders install its dependencies anonymously — no token is required for one-click deploy. (If a future release adds a private `@wyre-ai/*` dependency, you would supply a GitHub PAT with `read:packages` as a build variable — `NODE_AUTH_TOKEN` for Cloudflare Workers, a build-time `GITHUB_TOKEN` secret for DigitalOcean.)
 >
-> **Installing the published package:** The released package is published to the [GitHub Packages](https://github.com/wyre-technology/qbo-mcp/pkgs/npm/qbo-mcp) npm registry, which requires authentication on every install (even for public packages). To install it, authenticate npm to `npm.pkg.github.com` with a GitHub PAT that has `read:packages`:
+> **Installing the published package:** The released package is published to the [GitHub Packages](https://github.com/WYRE-AI/qbo-mcp/pkgs/npm/qbo-mcp) npm registry, which requires authentication on every install (even for public packages). To install it, authenticate npm to `npm.pkg.github.com` with a GitHub PAT that has `read:packages`:
 >
 > ```bash
 > export NODE_AUTH_TOKEN=$(gh auth token)
-> npm install @wyre-technology/qbo-mcp
+> npm install @wyre-ai/qbo-mcp
 > ```
 
 ## Quick Start
@@ -105,7 +105,7 @@ Set `QBO_CREDENTIALS_FILE` to skip environment reinjection entirely. The server 
 # docker-compose.yml
 services:
   qbo-mcp:
-    image: ghcr.io/wyre-technology/qbo-mcp
+    image: ghcr.io/wyre-ai/qbo-mcp
     environment:
       MCP_TRANSPORT: http
       QBO_CREDENTIALS_FILE: /secrets/qbo.env
