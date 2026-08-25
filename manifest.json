@@ -5,9 +5,9 @@
   "version": "0.0.0",
   "description": "MCP server for QuickBooks Online - 130+ tools across 22 entities and 10 financial reports",
   "long_description": "Provides AI assistants with structured access to QuickBooks Online accounting data. Full CRUD for customers, vendors, items, accounts, invoices, bills, payments, journal entries, sales receipts, estimates, credit memos, deposits, transfers, time activities, classes, departments, terms, payment methods, employees, attachments, and more. Includes 10 financial reports (P&L, balance sheet, cash flow, trial balance, general ledger, aged AR/AP, customer/vendor breakdowns).",
-  "author": { "name": "Wyre Technology", "url": "https://github.com/wyre-technology" },
-  "repository": { "type": "git", "url": "https://github.com/wyre-technology/qbo-mcp" },
-  "homepage": "https://github.com/wyre-technology/qbo-mcp",
+  "author": { "name": "Wyre Technology", "url": "https://github.com/WYRE-AI" },
+  "repository": { "type": "git", "url": "https://github.com/WYRE-AI/qbo-mcp" },
+  "homepage": "https://github.com/WYRE-AI/qbo-mcp",
   "license": "Apache-2.0",
   "keywords": ["quickbooks", "qbo", "accounting", "msp", "invoices", "intuit"],
   "server": {

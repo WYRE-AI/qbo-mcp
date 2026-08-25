@@ -1,18 +1,18 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.wyre-technology/qbo-mcp",
+  "name": "io.github.WYRE-AI/qbo-mcp",
   "title": "QuickBooks Online",
   "description": "MCP server for QuickBooks Online — accounts, customers, invoices, bills, and reports.",
   "repository": {
-    "url": "https://github.com/wyre-technology/qbo-mcp",
+    "url": "https://github.com/WYRE-AI/qbo-mcp",
     "source": "github"
   },
   "version": "0.0.0",
-  "websiteUrl": "https://github.com/wyre-technology/qbo-mcp",
+  "websiteUrl": "https://github.com/WYRE-AI/qbo-mcp",
   "packages": [
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/wyre-technology/qbo-mcp:0.0.0",
+      "identifier": "ghcr.io/wyre-ai/qbo-mcp:0.0.0",
       "transport": {
         "type": "stdio"
       },
