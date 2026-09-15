@@ -91,6 +91,7 @@ export interface EntityConfig {
  */
 export type ToolResult = {
   content: { type: "text"; text: string }[];
+  structuredContent?: Record<string, unknown>;
   isError?: boolean;
 };
 

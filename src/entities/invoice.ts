@@ -121,8 +121,25 @@ export const invoiceExtras: EntityExtras = {
       const result = await getClient().get(`invoice/${invoiceId}`);
       // MCP Apps: attach the normalized card payload the ui:// invoice card
       // renders from. Best-effort — no card just means no UI surface, and
-      // the model-visible JSON is otherwise unchanged.
-      return jsonText(attachInvoiceCard(result));
+      // the full JSON payload is otherwise unchanged.
+      const merged = attachInvoiceCard(result) as Record<string, unknown>;
+      // SEP-1865: content/structuredContent separation — a short text
+      // summary goes in `content`, the full payload (including _card)
+      // moves to `structuredContent`. No fields are dropped, only relocated.
+      const invoice = merged.Invoice as
+        | { DocNumber?: unknown; TotalAmt?: unknown; Balance?: unknown }
+        | undefined;
+      const docNumber =
+        typeof invoice?.DocNumber === "string" ? invoice.DocNumber : invoiceId;
+      const balance = typeof invoice?.Balance === "number" ? invoice.Balance : undefined;
+      const summary =
+        balance !== undefined
+          ? `Retrieved invoice #${docNumber} (balance: ${balance}).`
+          : `Retrieved invoice #${docNumber}.`;
+      return {
+        content: [{ type: "text", text: summary }],
+        structuredContent: merged,
+      };
     },
 
     qbo_invoices_list: async (args) => {
