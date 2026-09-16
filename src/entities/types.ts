@@ -91,6 +91,10 @@ export interface EntityConfig {
  */
 export type ToolResult = {
   content: { type: "text"; text: string }[];
+  /**
+   * SEP-1865: the full entity payload (including any `_card` UI data),
+   * distinct from the short human-readable summary in `content`.
+   */
   structuredContent?: Record<string, unknown>;
   isError?: boolean;
 };
