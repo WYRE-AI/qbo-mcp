@@ -170,6 +170,12 @@ export function createMcpServer(): Server {
       capabilities: {
         tools: {},
         resources: {},
+        // MCP Apps (SEP-1865): explicitly declare the extension capability so
+        // clients can negotiate UI support without inferring it from the
+        // presence of ui:// resources (SEP-1724 extensions mechanism).
+        extensions: {
+          "io.modelcontextprotocol/ui": {},
+        },
       },
     },
   );
