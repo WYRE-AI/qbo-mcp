@@ -54,6 +54,14 @@ const invoiceFields: EntityField[] = [
   },
 ];
 
+const invoiceUpdateFields: EntityField[] = invoiceFields.map((field) =>
+  // CustomerRef and Line are required to create an invoice. A sparse update
+  // may change other fields without resending them.
+  field.name === "CustomerRef" || field.name === "Line"
+    ? { ...field, required: false }
+    : field
+);
+
 export const invoiceConfig: EntityConfig = {
   name: "Invoice",
   toolPrefix: "qbo_invoices",
@@ -62,7 +70,7 @@ export const invoiceConfig: EntityConfig = {
   // list is overridden in extras to add the status filter + elicitation.
   get: { idParam: "invoiceId" },
   create: { fields: invoiceFields },
-  update: { idParam: "invoiceId", fields: invoiceFields },
+  update: { idParam: "invoiceId", fields: invoiceUpdateFields },
   void: {
     idParam: "invoiceId",
     style: "operation",

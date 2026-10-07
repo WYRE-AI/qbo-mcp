@@ -94,9 +94,20 @@ describe("generateEntityTools", () => {
     const tools = generateEntityTools(paymentConfig);
     for (const name of ["qbo_payments_create", "qbo_payments_update"]) {
       const tool = tools.find((t) => t.name === name);
-      const props = (tool?.inputSchema as { properties: Record<string, unknown> }).properties;
-      expect(props).toHaveProperty("DepositToAccountRef");
+      const props = (tool?.inputSchema as { properties: Record<string, { description?: string }> })
+        .properties;
+      expect(props.DepositToAccountRef?.description).toMatch(/Omit on create/);
+      expect(props.DepositToAccountRef?.description).toMatch(/Omit on update/);
     }
+    const create = tools.find((t) => t.name === "qbo_payments_create")!;
+    const update = tools.find((t) => t.name === "qbo_payments_update")!;
+    expect((create.inputSchema as { required: string[] }).required).toEqual(
+      expect.arrayContaining(["CustomerRef", "TotalAmt"])
+    );
+    expect((update.inputSchema as { required: string[] }).required).toEqual([
+      "paymentId",
+      "SyncToken",
+    ]);
   });
 
   it("customer update can set Active and does not expose void", () => {
@@ -105,6 +116,25 @@ describe("generateEntityTools", () => {
     const update = tools.find((t) => t.name === "qbo_customers_update");
     const props = (update?.inputSchema as { properties: Record<string, unknown> }).properties;
     expect(props).toHaveProperty("Active");
+    expect((update?.inputSchema as { required: string[] }).required).toEqual([
+      "customerId",
+      "SyncToken",
+    ]);
+    const create = tools.find((t) => t.name === "qbo_customers_create")!;
+    expect((create.inputSchema as { required: string[] }).required).toContain("DisplayName");
+  });
+
+  it("invoice update does not require create-only CustomerRef and Line", () => {
+    const tools = generateEntityTools(invoiceConfig);
+    const create = tools.find((t) => t.name === "qbo_invoices_create")!;
+    const update = tools.find((t) => t.name === "qbo_invoices_update")!;
+    expect((create.inputSchema as { required: string[] }).required).toEqual(
+      expect.arrayContaining(["CustomerRef", "Line"])
+    );
+    expect((update.inputSchema as { required: string[] }).required).toEqual([
+      "invoiceId",
+      "SyncToken",
+    ]);
   });
 
   it("emits a void tool only when the config declares one", () => {

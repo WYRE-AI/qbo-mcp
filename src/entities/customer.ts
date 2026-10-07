@@ -45,7 +45,10 @@ const customerFields: EntityField[] = [
 ];
 
 const customerUpdateFields: EntityField[] = [
-  ...customerFields,
+  // Sparse update only needs Id + SyncToken. DisplayName stays required on create.
+  ...customerFields.map((field) =>
+    field.name === "DisplayName" ? { ...field, required: false } : field
+  ),
   {
     name: "Active",
     type: "boolean",

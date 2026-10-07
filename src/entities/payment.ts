@@ -36,7 +36,7 @@ const paymentFields: EntityField[] = [
     name: "DepositToAccountRef",
     type: "object",
     description:
-      'Bank or asset account to deposit this payment into, e.g. {"value": "35"}. Omit to use Undeposited Funds.',
+      'Bank or asset account to deposit this payment into, e.g. {"value": "35"}. Omit on create to use Undeposited Funds. Omit on update to leave the existing deposit account unchanged.',
   },
   {
     name: "Line",
@@ -47,6 +47,14 @@ const paymentFields: EntityField[] = [
   },
 ];
 
+const paymentUpdateFields: EntityField[] = paymentFields.map((field) =>
+  // CustomerRef and TotalAmt are required to create a payment. A sparse
+  // update may change Line or the deposit account without resending them.
+  field.name === "CustomerRef" || field.name === "TotalAmt"
+    ? { ...field, required: false }
+    : field
+);
+
 export const paymentConfig: EntityConfig = {
   name: "Payment",
   toolPrefix: "qbo_payments",
@@ -55,7 +63,7 @@ export const paymentConfig: EntityConfig = {
   list: { dateRange: true },
   get: { idParam: "paymentId" },
   create: { fields: paymentFields },
-  update: { idParam: "paymentId", fields: paymentFields },
+  update: { idParam: "paymentId", fields: paymentUpdateFields },
   void: {
     idParam: "paymentId",
     style: "include",
