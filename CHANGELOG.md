@@ -7,8 +7,30 @@ manually maintained on feature branches and gets folded into the next release.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Search queries no longer send `ESCAPE` (#71).** QBO's query parser rejects
+  `LIKE ... ESCAPE '\\'` with `QueryParserError`, so every `*_search` and the
+  customer-list name prompt failed even for plain terms. Search SQL is now
+  `LIKE '%term%'` with quotes and backslashes doubled. `%` stays QBO's only
+  LIKE wildcard; `_` is literal.
+- **`startPosition` is no longer capped at 1000 (#71).** Only `maxResults` is
+  limited to QBO's 1000-row page size. List and search offsets can page past
+  the first thousand rows, up to a signed 32-bit ceiling.
+
 ### Added
 
+- **Sparse update for Customer, Invoice, and Payment (#71).**
+  `qbo_customers_update`, `qbo_invoices_update`, and `qbo_payments_update`
+  follow the existing Id + SyncToken sparse-update pattern. Customer update
+  accepts `Active: false` because QBO has no customer void or delete. Payment
+  create and update can set `DepositToAccountRef` (omit it to use Undeposited
+  Funds). A Payment `Line` update replaces applications: two lines for the
+  same invoice do not sum.
+- **Void for Invoice and Payment (#71).** `qbo_invoices_void` posts
+  `?operation=void`. `qbo_payments_void` posts `?operation=update&include=void`
+  (the Payment and SalesReceipt form). Both send `Id`, `SyncToken`, and
+  `sparse: true`.
 - **`QBO_CREDENTIALS_FILE`: file-based token rotation without a container
   recreate (#63).** In env mode, credentials frozen into the container
   environment at creation meant a cron-rotated `.env` + `docker restart`

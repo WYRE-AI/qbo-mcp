@@ -16,10 +16,8 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { getClient } from "../utils/client.js";
 import {
-  assertPositiveInt,
   buildDatedListSql,
-  escapeQboLike,
-  escapeQboString,
+  buildLikeSearchSql,
   type DatedListArgs,
 } from "../utils/qbo-sql.js";
 import type {
@@ -139,6 +137,29 @@ export function generateEntityTools(config: EntityConfig): Tool[] {
     });
   }
 
+  if (config.void) {
+    const note = config.void.note ? ` ${config.void.note}` : "";
+    tools.push({
+      name: `${config.toolPrefix}_void`,
+      description: `Void an existing ${config.name} record. The transaction stays in QuickBooks with amounts set to zero. Id and SyncToken are required (fetch the record first).${note}`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          [config.void.idParam]: {
+            type: "string",
+            description: `The ${config.name} ID to void`,
+          },
+          SyncToken: {
+            type: "string",
+            description:
+              "Current SyncToken of the record (required by QBO to void; fetch the record first to obtain it)",
+          },
+        },
+        required: [config.void.idParam, "SyncToken"],
+      },
+    });
+  }
+
   if (config.search) {
     tools.push({
       name: `${config.toolPrefix}_search`,
@@ -148,7 +169,7 @@ export function generateEntityTools(config: EntityConfig): Tool[] {
         properties: {
           term: {
             type: "string",
-            description: `Search term matched against ${config.search.field} with LIKE '%term%'`,
+            description: `Search term matched against ${config.search.field} with LIKE '%term%'. '%' is a wildcard; QBO does not support an ESCAPE clause.`,
           },
           startPosition: {
             type: "number",
@@ -229,17 +250,31 @@ function builtinHandlers(config: EntityConfig): Map<string, Handler> {
     });
   }
 
+  if (config.void) {
+    const path = pathFor(config, config.void.pathSegment);
+    const { idParam, style } = config.void;
+    const params: Record<string, string> =
+      style === "include"
+        ? { operation: "update", include: "void" }
+        : { operation: "void" };
+    map.set(`${prefix}_void`, async (args) => {
+      const body = {
+        Id: args[idParam] as string,
+        SyncToken: args.SyncToken as string,
+        sparse: true,
+      };
+      const result = await getClient().post(path, body, params);
+      return jsonText(result);
+    });
+  }
+
   if (config.search) {
     const { field } = config.search;
     map.set(`${prefix}_search`, async (args) => {
-      const rawTerm = args.term as string;
-      // LIKE-escape first so user `%`/`_` becomes literal, then quote-escape
-      // for SQL string-literal safety. ESCAPE '\\' tells QBO that backslash
-      // is the wildcard-escape character.
-      const term = escapeQboString(escapeQboLike(rawTerm));
-      const startPosition = assertPositiveInt(args.startPosition ?? 1, "startPosition");
-      const maxResults = assertPositiveInt(args.maxResults ?? 100, "maxResults");
-      const sql = `SELECT * FROM ${config.name} WHERE ${field} LIKE '%${term}%' ESCAPE '\\' STARTPOSITION ${startPosition} MAXRESULTS ${maxResults}`;
+      const sql = buildLikeSearchSql(config.name, field, args.term as string, {
+        startPosition: args.startPosition as number | undefined,
+        maxResults: args.maxResults as number | undefined,
+      });
       const result = await getClient().query(sql);
       return jsonText(result);
     });

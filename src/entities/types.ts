@@ -2,7 +2,7 @@
  * Entity-config types for the QBO MCP generator.
  *
  * A QBO entity (Customer, Invoice, Vendor, ...) maps to a small set of
- * uniform REST operations: list, get, create, update, search. The shape of
+ * uniform REST operations: list, get, create, update, void, search. The shape of
  * each operation is identical across entities — only the entity name,
  * field set, and search field differ. EntityConfig captures that variation
  * declaratively so 140+ tools can be expressed as ~30 short configs.
@@ -66,6 +66,28 @@ export interface UpdateOp {
   pathSegment?: string;
 }
 
+/**
+ * How QBO expects a void.
+ *
+ * - `operation`: `POST /{entity}?operation=void` — Invoice and most transactions.
+ * - `include`: `POST /{entity}?operation=update&include=void` — Payment and
+ *   SalesReceipt only. Intuit's PHP SDK (`PAYMENTCLASSNAME`) special-cases
+ *   those two; `operation=void` on a Payment does not void it.
+ *
+ * Customer has neither void nor delete. Deactivate with a sparse update
+ * setting `Active` to false.
+ */
+export type VoidStyle = "operation" | "include";
+
+export interface VoidOp {
+  idParam: string;
+  style: VoidStyle;
+  /** REST path segment. Defaults to the lowercased entity name. */
+  pathSegment?: string;
+  /** Extra sentence appended to the generated tool description. */
+  note?: string;
+}
+
 export interface SearchOp {
   /** QBO column to LIKE-search on, e.g. "DisplayName". */
   field: string;
@@ -82,6 +104,11 @@ export interface EntityConfig {
   get?: GetOp;
   create?: CreateOp;
   update?: UpdateOp;
+  /**
+   * Void, where the QBO Accounting API supports it. Not every entity does —
+   * Customer in particular has no void or delete.
+   */
+  void?: VoidOp;
   search?: SearchOp;
 }
 

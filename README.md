@@ -125,18 +125,18 @@ Set `QBO_ENV=sandbox` (env mode) or `X-Qbo-Environment: sandbox` (gateway mode) 
 
 Tools are organized by domain. Call `qbo_navigate` with a domain name (e.g. `customers`, `vendors`, `bills`) to discover the tools in that domain. All tools are always callable — navigation is a discovery aid, not a prerequisite.
 
-### Entities (config-driven, 116 tools across 22 entities)
+### Entities (config-driven, 122 tools across 22 entities)
 
-Each entity exposes some subset of `list`, `get`, `create`, `update`, `search`. Transactional entities support `startDate`/`endDate` filtering on the list operation. Updates are sparse and require the current `SyncToken` from a prior get.
+Each entity exposes some subset of `list`, `get`, `create`, `update`, `void`, `search`. Transactional entities support `startDate`/`endDate` filtering on the list operation. Updates are sparse and require the current `SyncToken` from a prior get. Void is exposed only where the QBO Accounting API supports it (Invoice uses `?operation=void`; Payment uses `?operation=update&include=void`). Customer has no void or delete — set `Active` to false on update to deactivate.
 
 **Sales workflow**
-- `qbo_customers_*` — list, get, create, search
-- `qbo_invoices_*` — list (Paid/Unpaid/Overdue status filter), get, create, send
+- `qbo_customers_*` — list, get, create, update, search (no void; deactivate with `Active: false`)
+- `qbo_invoices_*` — list (Paid/Unpaid/Overdue status filter), get, create, update, void, send
 - `qbo_estimates_*` — list, get, create, update
 - `qbo_sales_receipts_*` — list, get, create, update
 - `qbo_credit_memos_*` — list, get, create, update
 - `qbo_refund_receipts_*` — list, get, create, update
-- `qbo_payments_*` — list, get, create
+- `qbo_payments_*` — list, get, create, update, void
 
 **Purchase workflow**
 - `qbo_vendors_*` — list, get, create, update, search

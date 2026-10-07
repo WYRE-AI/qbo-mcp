@@ -17,13 +17,18 @@ export function escapeQboString(value: string): string {
 }
 
 /**
- * Escape LIKE-pattern metacharacters in a user-supplied search term so that
- * `qbo_x_search` does literal substring matching rather than treating `%` or
- * `_` as wildcards. Must be paired with `ESCAPE '\\'` in the SQL clause.
- * Quote escaping is the caller's responsibility (run `escapeQboString` after).
+ * Prepare a user term for `LIKE '%term%'`.
+ *
+ * QBO's query parser does not implement the SQL `ESCAPE` clause — a query
+ * that includes one fails with QueryParserError for every term. LIKE's only
+ * wildcard is `%` (`_` is literal), so `%` in the term is left as a wildcard.
+ *
+ * Single quotes are doubled. Backslashes are doubled because QBO also treats
+ * `\'` as an escaped apostrophe; a trailing backslash would otherwise escape
+ * the closing quote of the literal.
  */
-export function escapeQboLike(value: string): string {
-  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+export function escapeQboSearchTerm(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/'/g, "''");
 }
 
 /**
@@ -41,15 +46,29 @@ export function assertDate(value: string, field: string): string {
 }
 
 /**
- * Validate and coerce a positive integer for pagination parameters. QBO caps
- * MAXRESULTS at 1000 and rejects zero/negative values.
+ * QBO rejects MAXRESULTS above 1000. The default upper bound of
+ * {@link assertPositiveInt} matches that cap.
+ */
+export const QBO_MAX_RESULTS = 1000;
+
+/**
+ * STARTPOSITION is a 1-based offset. QBO does not cap it at 1000 (that limit
+ * is only for MAXRESULTS). A signed 32-bit ceiling keeps a non-integer or
+ * absurd value out of the query string.
+ */
+export const QBO_MAX_START_POSITION = 2_147_483_647;
+
+/**
+ * Validate and coerce a positive integer for pagination parameters. The
+ * default upper bound is QBO's MAXRESULTS cap of 1000. Pass
+ * `max: QBO_MAX_START_POSITION` for STARTPOSITION.
  */
 export function assertPositiveInt(
   value: unknown,
   field: string,
   opts: { min?: number; max?: number } = {}
 ): number {
-  const { min = 1, max = 1000 } = opts;
+  const { min = 1, max = QBO_MAX_RESULTS } = opts;
   const n = typeof value === "number" ? value : Number(value);
   if (!Number.isInteger(n) || n < min || n > max) {
     throw new Error(
@@ -77,7 +96,9 @@ export function buildDatedListSql(
   args: DatedListArgs,
   extraConditions: string[] = []
 ): string {
-  const startPosition = assertPositiveInt(args.startPosition ?? 1, "startPosition");
+  const startPosition = assertPositiveInt(args.startPosition ?? 1, "startPosition", {
+    max: QBO_MAX_START_POSITION,
+  });
   const maxResults = assertPositiveInt(args.maxResults ?? 100, "maxResults");
 
   const conditions: string[] = [...extraConditions];
@@ -94,4 +115,25 @@ export function buildDatedListSql(
   }
   sql += ` STARTPOSITION ${startPosition} MAXRESULTS ${maxResults}`;
   return sql;
+}
+
+/**
+ * `SELECT * FROM {entity} WHERE {field} LIKE '%term%' STARTPOSITION …`.
+ *
+ * `entity` and `field` must be fixed identifiers from entity config, not user
+ * input. The term is escaped with {@link escapeQboSearchTerm}. No `ESCAPE`
+ * clause: QBO's parser rejects it.
+ */
+export function buildLikeSearchSql(
+  entity: string,
+  field: string,
+  rawTerm: string,
+  args: Pick<DatedListArgs, "startPosition" | "maxResults"> = {}
+): string {
+  const term = escapeQboSearchTerm(rawTerm);
+  const startPosition = assertPositiveInt(args.startPosition ?? 1, "startPosition", {
+    max: QBO_MAX_START_POSITION,
+  });
+  const maxResults = assertPositiveInt(args.maxResults ?? 100, "maxResults");
+  return `SELECT * FROM ${entity} WHERE ${field} LIKE '%${term}%' STARTPOSITION ${startPosition} MAXRESULTS ${maxResults}`;
 }
