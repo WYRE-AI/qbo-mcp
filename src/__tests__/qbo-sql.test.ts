@@ -3,8 +3,10 @@ import {
   assertDate,
   assertPositiveInt,
   buildDatedListSql,
-  escapeQboLike,
+  buildLikeSearchSql,
+  escapeQboSearchTerm,
   escapeQboString,
+  QBO_MAX_START_POSITION,
 } from "../utils/qbo-sql.js";
 import { parseEnvironment } from "../utils/client.js";
 
@@ -32,17 +34,41 @@ describe("escapeQboString", () => {
   });
 });
 
-describe("escapeQboLike", () => {
-  it("escapes %, _, and backslash so search terms match literally", () => {
-    expect(escapeQboLike("50%")).toBe("50\\%");
-    expect(escapeQboLike("foo_bar")).toBe("foo\\_bar");
-    expect(escapeQboLike("a\\b")).toBe("a\\\\b");
-    expect(escapeQboLike("plain")).toBe("plain");
+describe("escapeQboSearchTerm", () => {
+  it("doubles quotes and backslashes but leaves % and _ as QBO LIKE sees them", () => {
+    expect(escapeQboSearchTerm("50%")).toBe("50%");
+    expect(escapeQboSearchTerm("foo_bar")).toBe("foo_bar");
+    expect(escapeQboSearchTerm("plain")).toBe("plain");
+    expect(escapeQboSearchTerm("O'Brien")).toBe("O''Brien");
+    expect(escapeQboSearchTerm("a\\b")).toBe("a\\\\b");
+    expect(escapeQboSearchTerm("trailing\\")).toBe("trailing\\\\");
+  });
+});
+
+describe("buildLikeSearchSql", () => {
+  it("does not emit ESCAPE, which QBO's parser rejects", () => {
+    const sql = buildLikeSearchSql("Customer", "DisplayName", "Scharpf");
+    expect(sql).toBe(
+      "SELECT * FROM Customer WHERE DisplayName LIKE '%Scharpf%' STARTPOSITION 1 MAXRESULTS 100"
+    );
+    expect(sql).not.toContain("ESCAPE");
   });
 
-  it("composes safely with escapeQboString for SQL string literals", () => {
-    const term = escapeQboString(escapeQboLike("O'Brien_50%"));
-    expect(term).toBe("O''Brien\\_50\\%");
+  it("quote-escapes the term and pages past 1000", () => {
+    const sql = buildLikeSearchSql("Customer", "DisplayName", "O'Brien", {
+      startPosition: 1001,
+      maxResults: 25,
+    });
+    expect(sql).toBe(
+      "SELECT * FROM Customer WHERE DisplayName LIKE '%O''Brien%' STARTPOSITION 1001 MAXRESULTS 25"
+    );
+  });
+
+  it("keeps a breakout attempt inside the LIKE literal", () => {
+    const sql = buildLikeSearchSql("Customer", "DisplayName", "x%' OR '1'='1");
+    expect(sql).toBe(
+      "SELECT * FROM Customer WHERE DisplayName LIKE '%x%'' OR ''1''=''1%' STARTPOSITION 1 MAXRESULTS 100"
+    );
   });
 });
 
@@ -73,6 +99,17 @@ describe("assertPositiveInt", () => {
     expect(() => assertPositiveInt(1.5, "x")).toThrow();
     expect(() => assertPositiveInt("abc", "x")).toThrow();
   });
+
+  it("accepts a STARTPOSITION past the MAXRESULTS cap when asked", () => {
+    expect(
+      assertPositiveInt(1001, "startPosition", { max: QBO_MAX_START_POSITION })
+    ).toBe(1001);
+    expect(() =>
+      assertPositiveInt(QBO_MAX_START_POSITION + 1, "startPosition", {
+        max: QBO_MAX_START_POSITION,
+      })
+    ).toThrow(/startPosition/);
+  });
 });
 
 describe("buildDatedListSql", () => {
@@ -91,6 +128,14 @@ describe("buildDatedListSql", () => {
     expect(() => buildDatedListSql("Bill", { startDate: "nope" })).toThrow(
       /Invalid startDate/
     );
+  });
+
+  it("allows startPosition past 1000 and still caps maxResults", () => {
+    expect(buildDatedListSql("Payment", { startPosition: 1001, maxResults: 1000 })).toBe(
+      "SELECT * FROM Payment STARTPOSITION 1001 MAXRESULTS 1000"
+    );
+    expect(() => buildDatedListSql("Payment", { maxResults: 1001 })).toThrow(/maxResults/);
+    expect(() => buildDatedListSql("Payment", { startPosition: 0 })).toThrow(/startPosition/);
   });
 
   it("prepends caller-supplied conditions before the date range", () => {

@@ -1,6 +1,7 @@
 /**
- * Invoice entity config. Generator handles get + create schemas. List is
- * overridden for the Paid/Unpaid/Overdue status filter + date-range
+ * Invoice entity config. Generator handles get, create, update, and void.
+ * Void is `POST /invoice?operation=void` (not the Payment `include=void` form).
+ * List is overridden for the Paid/Unpaid/Overdue status filter + date-range
  * elicitation; the get handler is overridden to attach the MCP Apps `_card`
  * payload. Send is a non-CRUD action (POST /invoice/:id/send).
  */
@@ -14,52 +15,66 @@ import {
   type DatedListArgs,
 } from "../utils/qbo-sql.js";
 import { jsonText } from "./generator.js";
-import type { EntityConfig, EntityExtras } from "./types.js";
+import type { EntityConfig, EntityExtras, EntityField } from "./types.js";
+
+const invoiceFields: EntityField[] = [
+  {
+    name: "CustomerRef",
+    type: "object",
+    required: true,
+    description:
+      'Customer reference object, e.g. {"value": "123"} where value is the customer ID',
+  },
+  {
+    name: "Line",
+    type: "array",
+    required: true,
+    description:
+      'Array of line items. Each line should have Amount, DetailType ("SalesItemLineDetail"), and SalesItemLineDetail with ItemRef. On update, providing Line replaces the invoice line items.',
+    items: { type: "object" },
+  },
+  { name: "DueDate", type: "string", description: "Due date (YYYY-MM-DD)" },
+  { name: "TxnDate", type: "string", description: "Transaction date (YYYY-MM-DD)" },
+  {
+    name: "BillEmail",
+    type: "object",
+    description:
+      'Email address to send the invoice to, e.g. {"Address": "customer@example.com"}',
+  },
+  {
+    name: "PrivateNote",
+    type: "string",
+    description: "Private note (not visible to customer)",
+  },
+  {
+    name: "CustomerMemo",
+    type: "object",
+    description:
+      'Memo visible to customer, e.g. {"value": "Thank you for your business"}',
+  },
+];
+
+const invoiceUpdateFields: EntityField[] = invoiceFields.map((field) =>
+  // CustomerRef and Line are required to create an invoice. A sparse update
+  // may change other fields without resending them.
+  field.name === "CustomerRef" || field.name === "Line"
+    ? { ...field, required: false }
+    : field
+);
 
 export const invoiceConfig: EntityConfig = {
   name: "Invoice",
   toolPrefix: "qbo_invoices",
   description:
-    "Invoice management - list, get, create invoices and send them by email",
+    "Invoice management - list, get, create, update, and void invoices, and send them by email",
   // list is overridden in extras to add the status filter + elicitation.
   get: { idParam: "invoiceId" },
-  create: {
-    fields: [
-      {
-        name: "CustomerRef",
-        type: "object",
-        required: true,
-        description:
-          'Customer reference object, e.g. {"value": "123"} where value is the customer ID',
-      },
-      {
-        name: "Line",
-        type: "array",
-        required: true,
-        description:
-          'Array of line items. Each line should have Amount, DetailType ("SalesItemLineDetail"), and SalesItemLineDetail with ItemRef.',
-        items: { type: "object" },
-      },
-      { name: "DueDate", type: "string", description: "Due date (YYYY-MM-DD)" },
-      { name: "TxnDate", type: "string", description: "Transaction date (YYYY-MM-DD)" },
-      {
-        name: "BillEmail",
-        type: "object",
-        description:
-          'Email address to send the invoice to, e.g. {"Address": "customer@example.com"}',
-      },
-      {
-        name: "PrivateNote",
-        type: "string",
-        description: "Private note (not visible to customer)",
-      },
-      {
-        name: "CustomerMemo",
-        type: "object",
-        description:
-          'Memo visible to customer, e.g. {"value": "Thank you for your business"}',
-      },
-    ],
+  create: { fields: invoiceFields },
+  update: { idParam: "invoiceId", fields: invoiceUpdateFields },
+  void: {
+    idParam: "invoiceId",
+    style: "operation",
+    note: "QuickBooks will not void an invoice that still has a payment applied.",
   },
 };
 

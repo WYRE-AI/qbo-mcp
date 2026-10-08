@@ -7,51 +7,65 @@ import { getClient } from "../utils/client.js";
 import {
   assertPositiveInt,
   buildDatedListSql,
-  escapeQboLike,
-  escapeQboString,
+  buildLikeSearchSql,
+  QBO_MAX_START_POSITION,
   type DatedListArgs,
 } from "../utils/qbo-sql.js";
 import { elicitText } from "../utils/elicitation.js";
 import { jsonText } from "./generator.js";
-import type { EntityConfig, EntityExtras } from "./types.js";
+import type { EntityConfig, EntityExtras, EntityField } from "./types.js";
+
+const customerFields: EntityField[] = [
+  {
+    name: "DisplayName",
+    type: "string",
+    required: true,
+    description: "Display name for the customer (required, must be unique)",
+  },
+  { name: "GivenName", type: "string", description: "First name of the customer" },
+  { name: "FamilyName", type: "string", description: "Last name of the customer" },
+  { name: "CompanyName", type: "string", description: "Company name" },
+  {
+    name: "PrimaryEmailAddr",
+    type: "object",
+    description:
+      'Primary email address object, e.g. {"Address": "user@example.com"}',
+  },
+  {
+    name: "PrimaryPhone",
+    type: "object",
+    description: 'Primary phone object, e.g. {"FreeFormNumber": "555-1234"}',
+  },
+  {
+    name: "BillAddr",
+    type: "object",
+    description:
+      "Billing address object with Line1, City, CountrySubDivisionCode, PostalCode",
+  },
+];
+
+const customerUpdateFields: EntityField[] = [
+  // Sparse update only needs Id + SyncToken. DisplayName stays required on create.
+  ...customerFields.map((field) =>
+    field.name === "DisplayName" ? { ...field, required: false } : field
+  ),
+  {
+    name: "Active",
+    type: "boolean",
+    description:
+      "Set to false to deactivate the customer. QuickBooks Online has no void or delete operation for Customer.",
+  },
+];
 
 export const customerConfig: EntityConfig = {
   name: "Customer",
   toolPrefix: "qbo_customers",
   description:
-    "Customer management - list, get, create, and search customers",
+    "Customer management - list, get, create, update, and search customers. QBO has no customer void or delete; set Active to false to deactivate.",
   list: {},
   get: { idParam: "customerId" },
-  create: {
-    fields: [
-      {
-        name: "DisplayName",
-        type: "string",
-        required: true,
-        description: "Display name for the customer (required, must be unique)",
-      },
-      { name: "GivenName", type: "string", description: "First name of the customer" },
-      { name: "FamilyName", type: "string", description: "Last name of the customer" },
-      { name: "CompanyName", type: "string", description: "Company name" },
-      {
-        name: "PrimaryEmailAddr",
-        type: "object",
-        description:
-          'Primary email address object, e.g. {"Address": "user@example.com"}',
-      },
-      {
-        name: "PrimaryPhone",
-        type: "object",
-        description: 'Primary phone object, e.g. {"FreeFormNumber": "555-1234"}',
-      },
-      {
-        name: "BillAddr",
-        type: "object",
-        description:
-          "Billing address object with Line1, City, CountrySubDivisionCode, PostalCode",
-      },
-    ],
-  },
+  create: { fields: customerFields },
+  update: { idParam: "customerId", fields: customerUpdateFields },
   search: { field: "DisplayName" },
 };
 
@@ -60,7 +74,8 @@ export const customerExtras: EntityExtras = {
     qbo_customers_list: async (args) => {
       const startPosition = assertPositiveInt(
         (args as DatedListArgs).startPosition ?? 1,
-        "startPosition"
+        "startPosition",
+        { max: QBO_MAX_START_POSITION }
       );
       const maxResults = assertPositiveInt(
         (args as DatedListArgs).maxResults ?? 100,
@@ -78,11 +93,10 @@ export const customerExtras: EntityExtras = {
 
       let sql: string;
       if (searchTerm) {
-        // Match the generator's search-handler escape posture: LIKE-escape
-        // wildcards in the term, then quote-escape the result, with
-        // ESCAPE '\\' so backslash is the wildcard-escape char.
-        const term = escapeQboString(escapeQboLike(searchTerm));
-        sql = `SELECT * FROM Customer WHERE DisplayName LIKE '%${term}%' ESCAPE '\\' STARTPOSITION ${startPosition} MAXRESULTS ${maxResults}`;
+        sql = buildLikeSearchSql("Customer", "DisplayName", searchTerm, {
+          startPosition,
+          maxResults,
+        });
       } else {
         sql = buildDatedListSql("Customer", args as DatedListArgs);
       }

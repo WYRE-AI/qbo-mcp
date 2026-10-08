@@ -41,8 +41,17 @@ describe("qbo-mcp", () => {
       "qbo_payments_list",
       "qbo_payments_get",
       "qbo_payments_create",
+      "qbo_customers_update",
+      "qbo_invoices_update",
+      "qbo_invoices_void",
+      "qbo_payments_update",
+      "qbo_payments_void",
     ]) {
       expect(names, `missing tool ${expected}`).toContain(expected);
     }
+    // QBO has no Customer void or delete. Deactivate via qbo_customers_update
+    // with Active: false.
+    expect(names.has("qbo_customers_void")).toBe(false);
+    expect(names.has("qbo_customers_delete")).toBe(false);
   });
 });
