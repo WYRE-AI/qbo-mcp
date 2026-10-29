@@ -8,8 +8,9 @@ import { invoiceConfig } from "../entities/invoice.js";
 import { paymentConfig } from "../entities/payment.js";
 import type { EntityConfig, EntityExtras } from "../entities/types.js";
 
-const { query, post, elicitText } = vi.hoisted(() => ({
+const { query, post, get, elicitText } = vi.hoisted(() => ({
   query: vi.fn(async (sql: string) => ({ sql })),
+  get: vi.fn(async (path: string): Promise<unknown> => ({ path })),
   post: vi.fn(
     async (path: string, body: unknown, params?: Record<string, string>) => ({
       path,
@@ -21,7 +22,7 @@ const { query, post, elicitText } = vi.hoisted(() => ({
 }));
 
 vi.mock("../utils/client.js", () => ({
-  getClient: () => ({ query, post }),
+  getClient: () => ({ query, post, get }),
 }));
 
 vi.mock("../utils/elicitation.js", () => ({
@@ -176,15 +177,195 @@ describe("makeEntityDispatcher", () => {
     );
   });
 
-  it("voids an invoice with operation=void", async () => {
-    post.mockClear();
-    const dispatch = makeEntityDispatcher(invoiceConfig);
-    await dispatch("qbo_invoices_void", { invoiceId: "129", SyncToken: "0" });
-    expect(post).toHaveBeenCalledWith(
-      "invoice",
-      { Id: "129", SyncToken: "0", sparse: true },
-      { operation: "void" }
-    );
+  describe("invoice void guard", () => {
+    const voidBody = { Id: "152", SyncToken: "2", sparse: true };
+    const paidInvoice = {
+      Invoice: {
+        Id: "152",
+        TotalAmt: 120,
+        Balance: 0,
+        LinkedTxn: [{ TxnId: "153", TxnType: "Payment" }],
+      },
+    };
+
+    it("voids an unpaid invoice with operation=void after reading it", async () => {
+      post.mockClear();
+      get.mockClear();
+      get.mockResolvedValueOnce({
+        Invoice: { Id: "129", TotalAmt: 50, Balance: 50, LinkedTxn: [] },
+      });
+      const dispatch = makeEntityDispatcher(invoiceConfig);
+      await dispatch("qbo_invoices_void", { invoiceId: "129", SyncToken: "0" });
+      expect(get).toHaveBeenCalledWith("invoice/129");
+      expect(post).toHaveBeenCalledWith(
+        "invoice",
+        { Id: "129", SyncToken: "0", sparse: true },
+        { operation: "void" }
+      );
+    });
+
+    it("refuses an invoice with an applied Payment", async () => {
+      post.mockClear();
+      get.mockResolvedValueOnce(paidInvoice);
+      const dispatch = makeEntityDispatcher(invoiceConfig);
+      const result = await dispatch("qbo_invoices_void", {
+        invoiceId: "152",
+        SyncToken: "2",
+      });
+      expect(result?.isError).toBe(true);
+      const text = result?.content[0]?.text ?? "";
+      expect(text).toMatch(/152/);
+      expect(text).toMatch(/120/);
+      expect(text).toMatch(/153/);
+      expect(text).toMatch(/confirmPaidInvoiceVoid: true/);
+      expect(post).not.toHaveBeenCalled();
+    });
+
+    it("refuses a partly paid invoice (Balance < TotalAmt, no LinkedTxn)", async () => {
+      post.mockClear();
+      get.mockResolvedValueOnce({
+        Invoice: { Id: "152", TotalAmt: 120, Balance: 20 },
+      });
+      const dispatch = makeEntityDispatcher(invoiceConfig);
+      const result = await dispatch("qbo_invoices_void", {
+        invoiceId: "152",
+        SyncToken: "2",
+      });
+      expect(result?.isError).toBe(true);
+      expect(post).not.toHaveBeenCalled();
+    });
+
+    it("voids a paid invoice when confirmPaidInvoiceVoid is true, without sending the flag", async () => {
+      post.mockClear();
+      get.mockClear();
+      const dispatch = makeEntityDispatcher(invoiceConfig);
+      const result = await dispatch("qbo_invoices_void", {
+        invoiceId: "152",
+        SyncToken: "2",
+        confirmPaidInvoiceVoid: true,
+      });
+      expect(result?.isError).not.toBe(true);
+      expect(get).not.toHaveBeenCalled();
+      expect(post).toHaveBeenCalledWith("invoice", voidBody, { operation: "void" });
+      expect(JSON.stringify(post.mock.calls)).not.toContain("confirmPaidInvoiceVoid");
+    });
+
+    it('does not accept confirmPaidInvoiceVoid: "true" (string)', async () => {
+      post.mockClear();
+      get.mockResolvedValueOnce(paidInvoice);
+      const dispatch = makeEntityDispatcher(invoiceConfig);
+      const result = await dispatch("qbo_invoices_void", {
+        invoiceId: "152",
+        SyncToken: "2",
+        confirmPaidInvoiceVoid: "true",
+      });
+      expect(result?.isError).toBe(true);
+      expect(post).not.toHaveBeenCalled();
+    });
+
+    it("exposes confirmPaidInvoiceVoid and the corrected description once", () => {
+      const voids = generateEntityTools(invoiceConfig).filter(
+        (t) => t.name === "qbo_invoices_void"
+      );
+      expect(voids).toHaveLength(1);
+      const tool = voids[0]!;
+      const schema = tool.inputSchema as {
+        properties: Record<string, { type?: string; description?: string }>;
+        required: string[];
+      };
+      expect(schema.properties.confirmPaidInvoiceVoid?.type).toBe("boolean");
+      expect(schema.required).toEqual(["invoiceId", "SyncToken"]);
+      expect(tool.description).toMatch(
+        /^Voids the invoice in QuickBooks\. This works even if a payment has already been applied, and the payment then stays as an unapplied credit\. Check the invoice's balance and payments first, and only void a paid invoice if the user explicitly asks for it\./
+      );
+      expect(tool.description).not.toMatch(/will not void/);
+    });
+
+    it("leaves the payment void tool unchanged", () => {
+      const tool = generateEntityTools(paymentConfig).find(
+        (t) => t.name === "qbo_payments_void"
+      )!;
+      const props = (tool.inputSchema as { properties: Record<string, unknown> })
+        .properties;
+      expect(Object.keys(props)).toEqual(["paymentId", "SyncToken"]);
+      expect(tool.description).toMatch(/^Void an existing Payment record\./);
+    });
+  });
+
+  describe("payment update CustomerRef", () => {
+    const base = { paymentId: "153", SyncToken: "1" };
+    const line = [{ Amount: 120, LinkedTxn: [{ TxnId: "152", TxnType: "Invoice" }] }];
+
+    it("reads and resends the existing CustomerRef when Line is sent alone", async () => {
+      post.mockClear();
+      get.mockClear();
+      get.mockResolvedValueOnce({
+        Payment: { CustomerRef: { value: "58", name: "Amy's Bird Sanctuary" } },
+      });
+      const dispatch = makeEntityDispatcher(paymentConfig);
+      await dispatch("qbo_payments_update", { ...base, Line: line });
+      expect(get).toHaveBeenCalledWith("payment/153");
+      expect(post).toHaveBeenCalledWith("payment", {
+        Id: "153",
+        SyncToken: "1",
+        sparse: true,
+        Line: line,
+        CustomerRef: { value: "58", name: "Amy's Bird Sanctuary" },
+      });
+    });
+
+    it("does not read the payment when CustomerRef is passed with Line", async () => {
+      post.mockClear();
+      get.mockClear();
+      const dispatch = makeEntityDispatcher(paymentConfig);
+      await dispatch("qbo_payments_update", {
+        ...base,
+        Line: line,
+        CustomerRef: { value: "9" },
+      });
+      expect(get).not.toHaveBeenCalled();
+      expect(post.mock.calls[0]?.[1]).toMatchObject({ CustomerRef: { value: "9" } });
+    });
+
+    it("does not read or add CustomerRef for a TotalAmt-only update", async () => {
+      post.mockClear();
+      get.mockClear();
+      const dispatch = makeEntityDispatcher(paymentConfig);
+      await dispatch("qbo_payments_update", { ...base, TotalAmt: 90 });
+      expect(get).not.toHaveBeenCalled();
+      expect(post).toHaveBeenCalledWith("payment", {
+        Id: "153",
+        SyncToken: "1",
+        sparse: true,
+        TotalAmt: 90,
+      });
+    });
+
+    it("returns an error without posting when the payment has no CustomerRef", async () => {
+      post.mockClear();
+      get.mockResolvedValueOnce({ Payment: { Id: "153" } });
+      const dispatch = makeEntityDispatcher(paymentConfig);
+      const result = await dispatch("qbo_payments_update", { ...base, Line: line });
+      expect(result?.isError).toBe(true);
+      expect(result?.content[0]?.text).toMatch(/Pass CustomerRef/);
+      expect(post).not.toHaveBeenCalled();
+    });
+
+    it("documents the rule in the schema and tool description", () => {
+      const tools = generateEntityTools(paymentConfig);
+      const update = tools.find((t) => t.name === "qbo_payments_update")!;
+      const create = tools.find((t) => t.name === "qbo_payments_create")!;
+      const props = (t: typeof update) =>
+        (t.inputSchema as { properties: Record<string, { description?: string }> })
+          .properties;
+      expect(props(update).CustomerRef?.description).toBe(
+        "Required when you change Line. Otherwise optional."
+      );
+      expect(props(create).CustomerRef?.description).toMatch(/^Customer reference object/);
+      expect(update.description).toContain(
+        "When Line is sent without CustomerRef, the tool reads the payment and resends its existing CustomerRef, because QuickBooks rejects a Line change without it."
+      );
+    });
   });
 
   it("voids a payment with operation=update&include=void", async () => {

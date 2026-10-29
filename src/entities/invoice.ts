@@ -15,7 +15,12 @@ import {
   type DatedListArgs,
 } from "../utils/qbo-sql.js";
 import { jsonText } from "./generator.js";
-import type { EntityConfig, EntityExtras, EntityField } from "./types.js";
+import type {
+  EntityConfig,
+  EntityExtras,
+  EntityField,
+  ToolResult,
+} from "./types.js";
 
 const invoiceFields: EntityField[] = [
   {
@@ -62,6 +67,42 @@ const invoiceUpdateFields: EntityField[] = invoiceFields.map((field) =>
     : field
 );
 
+/**
+ * QBO voids an invoice even when a payment is applied: the payment is left as
+ * an unapplied credit. Refuse unless the caller explicitly confirms.
+ */
+async function guardPaidInvoiceVoid(
+  args: Record<string, unknown>
+): Promise<ToolResult | null> {
+  if (args.confirmPaidInvoiceVoid === true) return null;
+  const invoiceId = args.invoiceId as string;
+  const response = (await getClient().get(`invoice/${invoiceId}`)) as {
+    Invoice?: {
+      Id?: string;
+      TotalAmt?: number;
+      Balance?: number;
+      LinkedTxn?: { TxnId?: string; TxnType?: string }[];
+    };
+  };
+  const invoice = response?.Invoice;
+  const payments = (invoice?.LinkedTxn ?? []).filter((t) => t.TxnType === "Payment");
+  const partlyPaid =
+    typeof invoice?.Balance === "number" &&
+    typeof invoice?.TotalAmt === "number" &&
+    invoice.Balance < invoice.TotalAmt;
+  if (payments.length === 0 && !partlyPaid) return null;
+  const ids = payments.map((p) => p.TxnId).join(", ") || "none listed";
+  return {
+    isError: true,
+    content: [
+      {
+        type: "text",
+        text: `Refusing to void invoice ${invoice?.Id ?? invoiceId}: it has a payment applied (TotalAmt ${invoice?.TotalAmt}, Balance ${invoice?.Balance}, linked payment Ids: ${ids}). Voiding would leave the payment as an unapplied credit. Pass confirmPaidInvoiceVoid: true only if the user explicitly asked to void a paid invoice.`,
+      },
+    ],
+  };
+}
+
 export const invoiceConfig: EntityConfig = {
   name: "Invoice",
   toolPrefix: "qbo_invoices",
@@ -74,7 +115,17 @@ export const invoiceConfig: EntityConfig = {
   void: {
     idParam: "invoiceId",
     style: "operation",
-    note: "QuickBooks will not void an invoice that still has a payment applied.",
+    description:
+      "Voids the invoice in QuickBooks. This works even if a payment has already been applied, and the payment then stays as an unapplied credit. Check the invoice's balance and payments first, and only void a paid invoice if the user explicitly asks for it.",
+    note: "Id and SyncToken are required; confirmPaidInvoiceVoid: true is needed when a payment is applied.",
+    extraProperties: {
+      confirmPaidInvoiceVoid: {
+        type: "boolean",
+        description:
+          "Set to true only when the user explicitly asked to void an invoice that has a payment applied. Without it, the tool refuses to void a paid or partly paid invoice.",
+      },
+    },
+    guard: guardPaidInvoiceVoid,
   },
 };
 

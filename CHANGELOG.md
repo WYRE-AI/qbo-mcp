@@ -12,8 +12,25 @@ manually maintained on feature branches and gets folded into the next release.
 - **Search queries no longer send `ESCAPE` (#71).** QBO's query parser rejects
   `LIKE ... ESCAPE '\\'` with `QueryParserError`, so every `*_search` and the
   customer-list name prompt failed even for plain terms. Search SQL is now
-  `LIKE '%term%'` with quotes and backslashes doubled. `%` stays QBO's only
-  LIKE wildcard; `_` is literal.
+  `LIKE '%term%'` with no `ESCAPE` clause. `%` stays QBO's only LIKE wildcard;
+  `_` is literal. (Quote handling was corrected afterwards; see the apostrophe
+  entry below.)
+- **Apostrophes in search terms no longer fail.** QBO does not accept SQL
+  quote doubling: `LIKE '%O''Brien%'` returned 400 code 4000
+  (QueryParserError). `escapeQboSearchTerm` and `escapeQboString` now escape
+  backslashes first, then turn `'` into `\'`, so `O'Brien` is sent as
+  `O\'Brien` and a trailing or doubled backslash cannot un-escape a quote.
+- **`qbo_payments_update` no longer fails when `Line` changes without
+  `CustomerRef`.** QBO rejects that with 400 code 2020. The tool now reads the
+  payment and resends its existing `CustomerRef` (an error asks for it if the
+  payment has none). `CustomerRef` stays optional in the schema; the extra read
+  only happens when `Line` is sent without it.
+- **`qbo_invoices_void` description corrected and paid invoices guarded.** The
+  old text claimed QuickBooks will not void an invoice with a payment applied.
+  It does, leaving the payment as an unapplied credit. The tool now reads the
+  invoice and refuses to void one with an applied Payment or a Balance below
+  TotalAmt unless `confirmPaidInvoiceVoid: true` is passed. The flag is never
+  sent to QBO.
 - **`startPosition` is no longer capped at 1000 (#71).** Only `maxResults` is
   limited to QBO's 1000-row page size. List and search offsets can page past
   the first thousand rows, up to a signed 32-bit ceiling.

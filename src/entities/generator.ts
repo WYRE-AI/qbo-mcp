@@ -126,9 +126,10 @@ export function generateEntityTools(config: EntityConfig): Tool[] {
       description:
         "Current SyncToken of the record (required by QBO for sparse updates; fetch the record first to obtain it)",
     };
+    const note = config.update.note ? ` ${config.update.note}` : "";
     tools.push({
       name: `${config.toolPrefix}_update`,
-      description: `Sparse-update an existing ${config.name} record. Only provided fields are changed; Id and SyncToken are required.`,
+      description: `Sparse-update an existing ${config.name} record. Only provided fields are changed; Id and SyncToken are required.${note}`,
       inputSchema: {
         type: "object",
         properties,
@@ -141,7 +142,7 @@ export function generateEntityTools(config: EntityConfig): Tool[] {
     const note = config.void.note ? ` ${config.void.note}` : "";
     tools.push({
       name: `${config.toolPrefix}_void`,
-      description: `Void an existing ${config.name} record. The transaction stays in QuickBooks with amounts set to zero. Id and SyncToken are required (fetch the record first).${note}`,
+      description: `${config.void.description ?? `Void an existing ${config.name} record. The transaction stays in QuickBooks with amounts set to zero. Id and SyncToken are required (fetch the record first).`}${note}`,
       inputSchema: {
         type: "object",
         properties: {
@@ -154,6 +155,7 @@ export function generateEntityTools(config: EntityConfig): Tool[] {
             description:
               "Current SyncToken of the record (required by QBO to void; fetch the record first to obtain it)",
           },
+          ...config.void.extraProperties,
         },
         required: [config.void.idParam, "SyncToken"],
       },
@@ -236,6 +238,7 @@ function builtinHandlers(config: EntityConfig): Map<string, Handler> {
     const path = pathFor(config, config.update.pathSegment);
     const { idParam } = config.update;
     const fieldNames = config.update.fields.map((f) => f.name);
+    const { prepare } = config.update;
     map.set(`${prefix}_update`, async (args) => {
       const body: Record<string, unknown> = {
         Id: args[idParam] as string,
@@ -245,6 +248,11 @@ function builtinHandlers(config: EntityConfig): Map<string, Handler> {
       for (const k of fieldNames) {
         if (args[k] !== undefined) body[k] = args[k];
       }
+      if (prepare) {
+        const prepared = await prepare(args);
+        if (prepared && "content" in prepared) return prepared;
+        if (prepared) Object.assign(body, prepared.fields);
+      }
       const result = await getClient().post(path, body);
       return jsonText(result);
     });
@@ -252,12 +260,16 @@ function builtinHandlers(config: EntityConfig): Map<string, Handler> {
 
   if (config.void) {
     const path = pathFor(config, config.void.pathSegment);
-    const { idParam, style } = config.void;
+    const { idParam, style, guard } = config.void;
     const params: Record<string, string> =
       style === "include"
         ? { operation: "update", include: "void" }
         : { operation: "void" };
     map.set(`${prefix}_void`, async (args) => {
+      if (guard) {
+        const refusal = await guard(args);
+        if (refusal) return refusal;
+      }
       const body = {
         Id: args[idParam] as string,
         SyncToken: args.SyncToken as string,

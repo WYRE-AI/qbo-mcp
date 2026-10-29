@@ -51,6 +51,13 @@ describe.skipIf(!hasCreds)("QBO sandbox integration", () => {
     expect(text).toMatch(/QueryResponse/);
   });
 
+  it("qbo_customers_search handles an apostrophe in the term", async () => {
+    // Before the escaping fix the term was sent as O''Brien and QBO answered
+    // 400 code 4000 (QueryParserError). QBO only accepts \' inside a literal.
+    const result = await callOk("qbo_customers_search", { term: "O'Brien" });
+    expect(result.content[0]?.text ?? "").toMatch(/QueryResponse/);
+  });
+
   it("tier-1: qbo_vendors_list returns Vendor rows", async () => {
     const result = await callOk("qbo_vendors_list", { maxResults: 5 });
     const text = result.content[0]?.text ?? "";
