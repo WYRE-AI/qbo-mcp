@@ -13,6 +13,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 import { resolveEnvCredentials } from "./env-credentials.js";
+import { assertQboId } from "./qbo-ids.js";
 
 const QBO_API_HOSTS = {
   production: "https://quickbooks.api.intuit.com",
@@ -72,8 +73,10 @@ class QboClient {
   private baseUrl: string;
 
   constructor(config: QboClientConfig) {
+    // The realm id is interpolated into the URL path; never echo the token.
+    assertQboId(config.realmId, "realmId");
     this.config = config;
-    this.baseUrl = `${QBO_API_HOSTS[config.environment]}/v3/company/${config.realmId}`;
+    this.baseUrl = `${QBO_API_HOSTS[config.environment]}/v3/company/${encodeURIComponent(config.realmId)}`;
   }
 
   /**

@@ -64,6 +64,16 @@ export interface UpdateOp {
   fields: EntityField[];
   idParam: string;
   pathSegment?: string;
+  /** Extra sentence appended to the generated tool description. */
+  note?: string;
+  /**
+   * Optional hook run before the sparse update is posted. Return a ToolResult
+   * to short-circuit (e.g. an error), an object of fields to merge into the
+   * body, or null to post unchanged.
+   */
+  prepare?: (
+    args: Record<string, unknown>
+  ) => Promise<ToolResult | { fields: Record<string, unknown> } | null>;
 }
 
 /**
@@ -86,6 +96,15 @@ export interface VoidOp {
   pathSegment?: string;
   /** Extra sentence appended to the generated tool description. */
   note?: string;
+  /** Replaces the generated tool description (the note is still appended). */
+  description?: string;
+  /** Extra input properties (never sent to QBO; consumed by `guard`). */
+  extraProperties?: Record<string, object>;
+  /**
+   * Runs before the void is posted. Return a ToolResult to refuse the void
+   * (nothing is posted), or null to proceed.
+   */
+  guard?: (args: Record<string, unknown>) => Promise<ToolResult | null>;
 }
 
 export interface SearchOp {
@@ -100,6 +119,13 @@ export interface EntityConfig {
   toolPrefix: string;
   /** One-line description used by qbo_navigate for this domain. */
   description: string;
+  /**
+   * Pattern the entity Id must match before it is interpolated into a URL
+   * path or request body. Defaults to numeric /^\d+$/. Only widen where QBO
+   * really uses non-numeric Ids, and keep the pattern anchored. SyncTokens
+   * are always numeric regardless of this setting.
+   */
+  idPattern?: RegExp;
   list?: ListOp;
   get?: GetOp;
   create?: CreateOp;

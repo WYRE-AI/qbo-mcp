@@ -4,12 +4,15 @@ import {
   makeEntityDispatcher,
 } from "../entities/generator.js";
 import { customerConfig, customerExtras } from "../entities/customer.js";
-import { invoiceConfig } from "../entities/invoice.js";
+import { invoiceConfig, invoiceExtras } from "../entities/invoice.js";
 import { paymentConfig } from "../entities/payment.js";
+import { taxCodeConfig } from "../entities/tax-code.js";
+import { termConfig } from "../entities/term.js";
 import type { EntityConfig, EntityExtras } from "../entities/types.js";
 
-const { query, post, elicitText } = vi.hoisted(() => ({
+const { query, post, get, elicitText } = vi.hoisted(() => ({
   query: vi.fn(async (sql: string) => ({ sql })),
+  get: vi.fn(async (path: string): Promise<unknown> => ({ path })),
   post: vi.fn(
     async (path: string, body: unknown, params?: Record<string, string>) => ({
       path,
@@ -21,7 +24,7 @@ const { query, post, elicitText } = vi.hoisted(() => ({
 }));
 
 vi.mock("../utils/client.js", () => ({
-  getClient: () => ({ query, post }),
+  getClient: () => ({ query, post, get }),
 }));
 
 vi.mock("../utils/elicitation.js", () => ({
@@ -176,15 +179,474 @@ describe("makeEntityDispatcher", () => {
     );
   });
 
-  it("voids an invoice with operation=void", async () => {
-    post.mockClear();
-    const dispatch = makeEntityDispatcher(invoiceConfig);
-    await dispatch("qbo_invoices_void", { invoiceId: "129", SyncToken: "0" });
-    expect(post).toHaveBeenCalledWith(
-      "invoice",
-      { Id: "129", SyncToken: "0", sparse: true },
-      { operation: "void" }
+  describe("invoice void guard", () => {
+    const voidBody = { Id: "152", SyncToken: "2", sparse: true };
+    const paidInvoice = {
+      Invoice: {
+        Id: "152",
+        SyncToken: "2",
+        TotalAmt: 120,
+        Balance: 0,
+        LinkedTxn: [{ TxnId: "153", TxnType: "Payment" }],
+      },
+    };
+
+    it("voids an unpaid invoice with operation=void after reading it", async () => {
+      post.mockClear();
+      get.mockClear();
+      get.mockResolvedValueOnce({
+        Invoice: { Id: "129", SyncToken: "0", TotalAmt: 50, Balance: 50, LinkedTxn: [] },
+      });
+      const dispatch = makeEntityDispatcher(invoiceConfig);
+      await dispatch("qbo_invoices_void", { invoiceId: "129", SyncToken: "0" });
+      expect(get).toHaveBeenCalledWith("invoice/129");
+      expect(post).toHaveBeenCalledWith(
+        "invoice",
+        { Id: "129", SyncToken: "0", sparse: true },
+        { operation: "void" }
+      );
+    });
+
+    it("refuses an invoice with an applied Payment", async () => {
+      post.mockClear();
+      get.mockResolvedValueOnce(paidInvoice);
+      const dispatch = makeEntityDispatcher(invoiceConfig);
+      const result = await dispatch("qbo_invoices_void", {
+        invoiceId: "152",
+        SyncToken: "2",
+      });
+      expect(result?.isError).toBe(true);
+      const text = result?.content[0]?.text ?? "";
+      expect(text).toMatch(/152/);
+      expect(text).toMatch(/120/);
+      expect(text).toMatch(/153/);
+      expect(text).toMatch(/confirmPaidInvoiceVoid: true/);
+      expect(post).not.toHaveBeenCalled();
+    });
+
+    it("refuses a partly paid invoice (Balance < TotalAmt, no LinkedTxn)", async () => {
+      post.mockClear();
+      get.mockResolvedValueOnce({
+        Invoice: { Id: "152", SyncToken: "2", TotalAmt: 120, Balance: 20 },
+      });
+      const dispatch = makeEntityDispatcher(invoiceConfig);
+      const result = await dispatch("qbo_invoices_void", {
+        invoiceId: "152",
+        SyncToken: "2",
+      });
+      expect(result?.isError).toBe(true);
+      expect(post).not.toHaveBeenCalled();
+    });
+
+    it("voids a paid invoice when confirmPaidInvoiceVoid is true, without sending the flag, and logs it", async () => {
+      post.mockClear();
+      get.mockClear();
+      get.mockResolvedValueOnce(paidInvoice);
+      const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+      const dispatch = makeEntityDispatcher(invoiceConfig);
+      const result = await dispatch("qbo_invoices_void", {
+        invoiceId: "152",
+        SyncToken: "2",
+        confirmPaidInvoiceVoid: true,
+      });
+      expect(result?.isError).not.toBe(true);
+      expect(get).toHaveBeenCalledWith("invoice/152");
+      expect(post).toHaveBeenCalledWith("invoice", voidBody, { operation: "void" });
+      expect(JSON.stringify(post.mock.calls)).not.toContain("confirmPaidInvoiceVoid");
+      expect(logged).toHaveBeenCalledWith(
+        "[qbo] confirmed paid-invoice void: invoice 152 TotalAmt 120 Balance 0 payments 153"
+      );
+      logged.mockRestore();
+    });
+
+    it("still refuses an unverifiable read when confirmPaidInvoiceVoid is true", async () => {
+      post.mockClear();
+      get.mockClear();
+      get.mockResolvedValueOnce({});
+      const dispatch = makeEntityDispatcher(invoiceConfig);
+      const result = await dispatch("qbo_invoices_void", {
+        invoiceId: "152",
+        SyncToken: "2",
+        confirmPaidInvoiceVoid: true,
+      });
+      expect(get).toHaveBeenCalledWith("invoice/152");
+      expect(result?.isError).toBe(true);
+      expect(post).not.toHaveBeenCalled();
+    });
+
+    it("does not log when confirmPaidInvoiceVoid is true but the invoice is unpaid", async () => {
+      post.mockClear();
+      get.mockResolvedValueOnce({
+        Invoice: { Id: "152", SyncToken: "2", TotalAmt: 120, Balance: 120 },
+      });
+      const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+      const dispatch = makeEntityDispatcher(invoiceConfig);
+      await dispatch("qbo_invoices_void", {
+        invoiceId: "152",
+        SyncToken: "2",
+        confirmPaidInvoiceVoid: true,
+      });
+      expect(post).toHaveBeenCalled();
+      expect(logged).not.toHaveBeenCalled();
+      logged.mockRestore();
+    });
+
+    it("refuses a fully paid invoice (Balance 0, no LinkedTxn)", async () => {
+      post.mockClear();
+      get.mockResolvedValueOnce({
+        Invoice: { Id: "152", SyncToken: "2", TotalAmt: 120, Balance: 0 },
+      });
+      const dispatch = makeEntityDispatcher(invoiceConfig);
+      const result = await dispatch("qbo_invoices_void", {
+        invoiceId: "152",
+        SyncToken: "2",
+      });
+      expect(result?.isError).toBe(true);
+      expect(result?.content[0]?.text).toMatch(/^Refusing to void invoice 152/);
+      expect(post).not.toHaveBeenCalled();
+    });
+
+    it("treats sub-cent float drift (TotalAmt 100, Balance 99.999) as unpaid", async () => {
+      post.mockClear();
+      get.mockResolvedValueOnce({
+        Invoice: { Id: "152", SyncToken: "2", TotalAmt: 100, Balance: 99.999 },
+      });
+      const dispatch = makeEntityDispatcher(invoiceConfig);
+      const result = await dispatch("qbo_invoices_void", {
+        invoiceId: "152",
+        SyncToken: "2",
+      });
+      expect(result?.isError).not.toBe(true);
+      expect(post).toHaveBeenCalledWith("invoice", voidBody, { operation: "void" });
+    });
+
+    describe("fails closed on an unverifiable read", () => {
+      const good = { Id: "152", SyncToken: "2", TotalAmt: 100, Balance: 100 };
+      const cases: [string, unknown][] = [
+        ["missing Invoice key", {}],
+        ["null response", null],
+        ["Invoice is an array", { Invoice: [good] }],
+        ["Fault body", { Invoice: good, Fault: { Error: [] } }],
+        ["Balance is a string", { Invoice: { ...good, Balance: "40" } }],
+        ["Balance missing", { Invoice: { ...good, Balance: undefined } }],
+        ["TotalAmt is NaN", { Invoice: { ...good, TotalAmt: NaN } }],
+        ["Id mismatch", { Invoice: { ...good, Id: "999" } }],
+        ["LinkedTxn not an array", { Invoice: { ...good, LinkedTxn: {} } }],
+      ];
+      it.each(cases)("refuses: %s", async (_label, response) => {
+        post.mockClear();
+        get.mockResolvedValueOnce(response);
+        const dispatch = makeEntityDispatcher(invoiceConfig);
+        const result = await dispatch("qbo_invoices_void", {
+          invoiceId: "152",
+          SyncToken: "2",
+        });
+        expect(result?.isError).toBe(true);
+        expect(result?.content[0]?.text).toMatch(
+          /^Cannot verify payment state for invoice 152, refusing to void\./
+        );
+        expect(post).not.toHaveBeenCalled();
+      });
+    });
+
+    it("refuses when the SyncToken is stale", async () => {
+      post.mockClear();
+      get.mockResolvedValueOnce({
+        Invoice: { Id: "152", SyncToken: "5", TotalAmt: 100, Balance: 100 },
+      });
+      const dispatch = makeEntityDispatcher(invoiceConfig);
+      const result = await dispatch("qbo_invoices_void", {
+        invoiceId: "152",
+        SyncToken: "2",
+      });
+      expect(result?.isError).toBe(true);
+      expect(result?.content[0]?.text).toMatch(/SyncToken is stale/);
+      expect(result?.content[0]?.text).toMatch(/Re-read the invoice/);
+      expect(post).not.toHaveBeenCalled();
+    });
+
+    it('does not accept confirmPaidInvoiceVoid: "true" (string)', async () => {
+      post.mockClear();
+      get.mockResolvedValueOnce(paidInvoice);
+      const dispatch = makeEntityDispatcher(invoiceConfig);
+      const result = await dispatch("qbo_invoices_void", {
+        invoiceId: "152",
+        SyncToken: "2",
+        confirmPaidInvoiceVoid: "true",
+      });
+      expect(result?.isError).toBe(true);
+      expect(post).not.toHaveBeenCalled();
+    });
+
+    it("exposes confirmPaidInvoiceVoid and the corrected description once", () => {
+      const voids = generateEntityTools(invoiceConfig).filter(
+        (t) => t.name === "qbo_invoices_void"
+      );
+      expect(voids).toHaveLength(1);
+      const tool = voids[0]!;
+      const schema = tool.inputSchema as {
+        properties: Record<string, { type?: string; description?: string }>;
+        required: string[];
+      };
+      expect(schema.properties.confirmPaidInvoiceVoid?.type).toBe("boolean");
+      expect(schema.required).toEqual(["invoiceId", "SyncToken"]);
+      expect(tool.description).toMatch(
+        /^Voids the invoice in QuickBooks\. This works even if a payment has already been applied, and the payment then stays as an unapplied credit\. Check the invoice's balance and payments first, and only void a paid invoice if the user explicitly asks for it\./
+      );
+      expect(tool.description).not.toMatch(/will not void/);
+    });
+
+    it("leaves the payment void tool unchanged", () => {
+      const tool = generateEntityTools(paymentConfig).find(
+        (t) => t.name === "qbo_payments_void"
+      )!;
+      const props = (tool.inputSchema as { properties: Record<string, unknown> })
+        .properties;
+      expect(Object.keys(props)).toEqual(["paymentId", "SyncToken"]);
+      expect(tool.description).toMatch(/^Void an existing Payment record\./);
+    });
+  });
+
+  describe("payment update CustomerRef", () => {
+    const base = { paymentId: "153", SyncToken: "1" };
+    const line = [{ Amount: 120, LinkedTxn: [{ TxnId: "152", TxnType: "Invoice" }] }];
+
+    it("reads and resends the existing CustomerRef when Line is sent alone", async () => {
+      post.mockClear();
+      get.mockClear();
+      get.mockResolvedValueOnce({
+        Payment: {
+          Id: "153",
+          CustomerRef: { value: "58", name: "Amy's Bird Sanctuary" },
+        },
+      });
+      const dispatch = makeEntityDispatcher(paymentConfig);
+      await dispatch("qbo_payments_update", { ...base, Line: line });
+      expect(get).toHaveBeenCalledWith("payment/153");
+      expect(post).toHaveBeenCalledWith("payment", {
+        Id: "153",
+        SyncToken: "1",
+        sparse: true,
+        Line: line,
+        CustomerRef: { value: "58", name: "Amy's Bird Sanctuary" },
+      });
+    });
+
+    it("does not read the payment when CustomerRef is passed with Line", async () => {
+      post.mockClear();
+      get.mockClear();
+      const dispatch = makeEntityDispatcher(paymentConfig);
+      await dispatch("qbo_payments_update", {
+        ...base,
+        Line: line,
+        CustomerRef: { value: "9" },
+      });
+      expect(get).not.toHaveBeenCalled();
+      expect(post.mock.calls[0]?.[1]).toMatchObject({ CustomerRef: { value: "9" } });
+    });
+
+    it("does not read or add CustomerRef for a TotalAmt-only update", async () => {
+      post.mockClear();
+      get.mockClear();
+      const dispatch = makeEntityDispatcher(paymentConfig);
+      await dispatch("qbo_payments_update", { ...base, TotalAmt: 90 });
+      expect(get).not.toHaveBeenCalled();
+      expect(post).toHaveBeenCalledWith("payment", {
+        Id: "153",
+        SyncToken: "1",
+        sparse: true,
+        TotalAmt: 90,
+      });
+    });
+
+    it("returns an error without posting when the payment has no CustomerRef", async () => {
+      post.mockClear();
+      get.mockResolvedValueOnce({ Payment: { Id: "153" } });
+      const dispatch = makeEntityDispatcher(paymentConfig);
+      const result = await dispatch("qbo_payments_update", { ...base, Line: line });
+      expect(result?.isError).toBe(true);
+      expect(result?.content[0]?.text).toMatch(/Pass CustomerRef/);
+      expect(post).not.toHaveBeenCalled();
+    });
+
+    it("errors without posting when the returned payment Id does not match", async () => {
+      post.mockClear();
+      get.mockResolvedValueOnce({
+        Payment: { Id: "999", CustomerRef: { value: "58" } },
+      });
+      const dispatch = makeEntityDispatcher(paymentConfig);
+      await expect(
+        dispatch("qbo_payments_update", { ...base, Line: line })
+      ).rejects.toThrow(/does not match the requested Id/);
+      expect(post).not.toHaveBeenCalled();
+    });
+
+    it("documents the rule in the schema and tool description", () => {
+      const tools = generateEntityTools(paymentConfig);
+      const update = tools.find((t) => t.name === "qbo_payments_update")!;
+      const create = tools.find((t) => t.name === "qbo_payments_create")!;
+      const props = (t: typeof update) =>
+        (t.inputSchema as { properties: Record<string, { description?: string }> })
+          .properties;
+      expect(props(update).CustomerRef?.description).toBe(
+        "Required when you change Line. Otherwise optional."
+      );
+      expect(props(create).CustomerRef?.description).toMatch(/^Customer reference object/);
+      expect(update.description).toContain(
+        "When Line is sent without CustomerRef, the tool reads the payment and resends its existing CustomerRef, because QuickBooks rejects a Line change without it."
+      );
+      expect(update.description).toContain(
+        "Sending Line replaces all existing lines on the payment, so include every line you want to keep."
+      );
+    });
+  });
+
+  describe("id validation", () => {
+    const badIds: unknown[] = ["1/%2e%2e/company", "../1", "1/../2", "12a", "", 12, " 12"];
+
+    it.each(badIds)("rejects id %j for get/update/void with no client call", async (bad) => {
+      get.mockClear();
+      post.mockClear();
+      const dispatch = makeEntityDispatcher(invoiceConfig, invoiceExtras);
+      const paymentDispatch = makeEntityDispatcher(paymentConfig);
+      await expect(dispatch("qbo_invoices_get", { invoiceId: bad })).rejects.toThrow(
+        /Invalid invoiceId/
+      );
+      await expect(
+        dispatch("qbo_invoices_update", { invoiceId: bad, SyncToken: "0" })
+      ).rejects.toThrow(/Invalid invoiceId/);
+      await expect(
+        dispatch("qbo_invoices_void", { invoiceId: bad, SyncToken: "0" })
+      ).rejects.toThrow(/Invalid invoiceId/);
+      await expect(
+        dispatch("qbo_invoices_send", { invoiceId: bad })
+      ).rejects.toThrow(/Invalid invoiceId/);
+      await expect(
+        paymentDispatch("qbo_payments_update", {
+          paymentId: bad,
+          SyncToken: "0",
+          Line: [],
+        })
+      ).rejects.toThrow(/Invalid paymentId/);
+      await expect(
+        paymentDispatch("qbo_payments_void", { paymentId: bad, SyncToken: "0" })
+      ).rejects.toThrow(/Invalid paymentId/);
+      expect(get).not.toHaveBeenCalled();
+      expect(post).not.toHaveBeenCalled();
+    });
+
+    it.each(["abc", "", 1, "1 "])("rejects SyncToken %j with no client call", async (bad) => {
+      get.mockClear();
+      post.mockClear();
+      const dispatch = makeEntityDispatcher(invoiceConfig);
+      const paymentDispatch = makeEntityDispatcher(paymentConfig);
+      const expected = /Invalid SyncToken: expected a numeric QuickBooks id string/;
+      await expect(
+        dispatch("qbo_invoices_update", { invoiceId: "1", SyncToken: bad })
+      ).rejects.toThrow(expected);
+      await expect(
+        dispatch("qbo_invoices_void", { invoiceId: "1", SyncToken: bad })
+      ).rejects.toThrow(expected);
+      await expect(
+        paymentDispatch("qbo_payments_update", {
+          paymentId: "1",
+          SyncToken: bad,
+          Line: [],
+        })
+      ).rejects.toThrow(expected);
+      expect(get).not.toHaveBeenCalled();
+      expect(post).not.toHaveBeenCalled();
+    });
+
+    it.each(["TAX", "NON", "3"])("qbo_tax_codes_get accepts %j", async (id) => {
+      get.mockClear();
+      const dispatch = makeEntityDispatcher(taxCodeConfig);
+      await dispatch("qbo_tax_codes_get", { taxCodeId: id });
+      expect(get).toHaveBeenCalledWith(`taxcode/${id}`);
+    });
+
+    it.each(["../x", "TAX/../1", "tax"])(
+      "qbo_tax_codes_get rejects %j with no client call",
+      async (bad) => {
+        get.mockClear();
+        const dispatch = makeEntityDispatcher(taxCodeConfig);
+        await expect(
+          dispatch("qbo_tax_codes_get", { taxCodeId: bad })
+        ).rejects.toThrow(/Invalid taxCodeId: expected a QuickBooks id string/);
+        expect(get).not.toHaveBeenCalled();
+      }
     );
+
+    it("keeps other entities numeric-only", async () => {
+      get.mockClear();
+      const customers = makeEntityDispatcher(customerConfig, customerExtras);
+      const terms = makeEntityDispatcher(termConfig);
+      await expect(
+        customers("qbo_customers_get", { customerId: "TAX" })
+      ).rejects.toThrow(/Invalid customerId: expected a numeric QuickBooks id string/);
+      await expect(terms("qbo_terms_get", { termId: "TAX" })).rejects.toThrow(
+        /Invalid termId/
+      );
+      expect(get).not.toHaveBeenCalled();
+    });
+
+    it("still works for valid ids and encodes them into the path", async () => {
+      get.mockClear();
+      post.mockClear();
+      const dispatch = makeEntityDispatcher(sampleConfig);
+      await dispatch("qbo_widgets_get", { widgetId: "42" });
+      expect(get).toHaveBeenCalledWith("widget/42");
+      await dispatch("qbo_widgets_update", { widgetId: "42", SyncToken: "3" });
+      expect(post).toHaveBeenCalledWith("widget", {
+        Id: "42",
+        SyncToken: "3",
+        sparse: true,
+      });
+    });
+  });
+
+  describe("tool annotations", () => {
+    it("marks generated read ops read-only and write ops destructive", () => {
+      const tools = generateEntityTools({
+        ...sampleConfig,
+        void: { idParam: "widgetId", style: "operation" },
+      });
+      for (const tool of tools) {
+        if (/_(list|get|search)$/.test(tool.name)) {
+          expect(tool.annotations, tool.name).toEqual({ readOnlyHint: true });
+        } else {
+          expect(tool.annotations, tool.name).toEqual({
+            readOnlyHint: false,
+            destructiveHint: true,
+          });
+        }
+      }
+      expect(tools.map((t) => t.name)).toEqual(
+        expect.arrayContaining(["qbo_widgets_void", "qbo_widgets_update"])
+      );
+    });
+
+    it("annotates invoice and hand-written extras, and no *_list/_get/_search lacks readOnlyHint", async () => {
+      const { expenseTools } = await import("../domains/expenses.js");
+      const { reportTools } = await import("../domains/reports.js");
+      const tools = [
+        ...generateEntityTools(invoiceConfig),
+        ...generateEntityTools(paymentConfig),
+        ...(invoiceExtras.tools ?? []),
+        ...expenseTools,
+        ...reportTools,
+      ];
+      const send = tools.find((t) => t.name === "qbo_invoices_send")!;
+      expect(send.annotations).toEqual({ readOnlyHint: false, destructiveHint: true });
+      for (const t of tools) {
+        if (/_(list|get|search)$/.test(t.name)) {
+          expect(t.annotations?.readOnlyHint, t.name).toBe(true);
+        }
+      }
+      for (const t of [...expenseTools, ...reportTools]) {
+        expect(t.annotations?.readOnlyHint, t.name).toBe(true);
+      }
+    });
   });
 
   it("voids a payment with operation=update&include=void", async () => {
