@@ -237,7 +237,7 @@ function builtinHandlers(config: EntityConfig): Map<string, Handler> {
     const { idParam } = config.get;
     const path = pathFor(config, config.get.pathSegment);
     map.set(`${prefix}_get`, async (args) => {
-      const id = assertQboId(args[idParam], idParam);
+      const id = assertQboId(args[idParam], idParam, config.idPattern);
       const result = await getClient().get(`${path}/${encodeURIComponent(id)}`);
       return jsonText(result);
     });
@@ -263,7 +263,7 @@ function builtinHandlers(config: EntityConfig): Map<string, Handler> {
     const { prepare } = config.update;
     map.set(`${prefix}_update`, async (args) => {
       const body: Record<string, unknown> = {
-        Id: assertQboId(args[idParam], idParam),
+        Id: assertQboId(args[idParam], idParam, config.idPattern),
         SyncToken: assertQboId(args.SyncToken, "SyncToken"),
         sparse: true,
       };
@@ -290,7 +290,7 @@ function builtinHandlers(config: EntityConfig): Map<string, Handler> {
     map.set(`${prefix}_void`, async (args) => {
       // Validate before the guard so no request is made for a bad id.
       const body = {
-        Id: assertQboId(args[idParam], idParam),
+        Id: assertQboId(args[idParam], idParam, config.idPattern),
         SyncToken: assertQboId(args.SyncToken, "SyncToken"),
         sparse: true,
       };

@@ -32,6 +32,7 @@ import {
   dispatchTool,
   entityDomains,
 } from "./entities/index.js";
+import { READ_ONLY_ANNOTATIONS } from "./entities/generator.js";
 import {
   credentialStore,
   parseEnvironment,
@@ -106,6 +107,7 @@ const navigateTool: Tool = {
     },
     required: ["domain"],
   },
+  annotations: { ...READ_ONLY_ANNOTATIONS },
 };
 
 /**
@@ -118,6 +120,7 @@ const statusTool: Tool = {
     type: "object",
     properties: {},
   },
+  annotations: { ...READ_ONLY_ANNOTATIONS },
 };
 
 /**

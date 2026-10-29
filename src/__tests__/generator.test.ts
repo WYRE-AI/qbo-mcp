@@ -6,6 +6,8 @@ import {
 import { customerConfig, customerExtras } from "../entities/customer.js";
 import { invoiceConfig, invoiceExtras } from "../entities/invoice.js";
 import { paymentConfig } from "../entities/payment.js";
+import { taxCodeConfig } from "../entities/tax-code.js";
+import { termConfig } from "../entities/term.js";
 import type { EntityConfig, EntityExtras } from "../entities/types.js";
 
 const { query, post, get, elicitText } = vi.hoisted(() => ({
@@ -554,6 +556,38 @@ describe("makeEntityDispatcher", () => {
       ).rejects.toThrow(expected);
       expect(get).not.toHaveBeenCalled();
       expect(post).not.toHaveBeenCalled();
+    });
+
+    it.each(["TAX", "NON", "3"])("qbo_tax_codes_get accepts %j", async (id) => {
+      get.mockClear();
+      const dispatch = makeEntityDispatcher(taxCodeConfig);
+      await dispatch("qbo_tax_codes_get", { taxCodeId: id });
+      expect(get).toHaveBeenCalledWith(`taxcode/${id}`);
+    });
+
+    it.each(["../x", "TAX/../1", "tax"])(
+      "qbo_tax_codes_get rejects %j with no client call",
+      async (bad) => {
+        get.mockClear();
+        const dispatch = makeEntityDispatcher(taxCodeConfig);
+        await expect(
+          dispatch("qbo_tax_codes_get", { taxCodeId: bad })
+        ).rejects.toThrow(/Invalid taxCodeId: expected a QuickBooks id string/);
+        expect(get).not.toHaveBeenCalled();
+      }
+    );
+
+    it("keeps other entities numeric-only", async () => {
+      get.mockClear();
+      const customers = makeEntityDispatcher(customerConfig, customerExtras);
+      const terms = makeEntityDispatcher(termConfig);
+      await expect(
+        customers("qbo_customers_get", { customerId: "TAX" })
+      ).rejects.toThrow(/Invalid customerId: expected a numeric QuickBooks id string/);
+      await expect(terms("qbo_terms_get", { termId: "TAX" })).rejects.toThrow(
+        /Invalid termId/
+      );
+      expect(get).not.toHaveBeenCalled();
     });
 
     it("still works for valid ids and encodes them into the path", async () => {

@@ -77,7 +77,10 @@ describe.skipIf(!hasCreds)("QBO sandbox integration", () => {
       "\\' OR 1=1 --",
     ];
     for (const term of terms) {
-      const result = await callOk("qbo_customers_search", { term });
+      const result = await callOk("qbo_customers_search", {
+        term,
+        maxResults: 1000,
+      });
       if (total > 0) {
         expect(
           countRows(result.content[0]?.text ?? ""),

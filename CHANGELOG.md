@@ -9,6 +9,18 @@ manually maintained on feature branches and gets folded into the next release.
 
 ### Fixed
 
+- **TaxCode ids accept `TAX` and `NON`.** `EntityConfig` gained an optional
+  `idPattern` (default numeric); only `qbo_tax_codes_*` widens it, to
+  `/^(?:\d+|TAX|NON)$/`, because US companies expose those pseudo tax codes.
+  Every other entity stays numeric-only, and SyncTokens are always numeric.
+- **`qbo_attachables_upload` validates its attach target before any request.**
+  `attachToType` and `attachToId` must be given together (empty string counts as
+  not given), `attachToType` must be one of the new `ATTACHABLE_ENTITY_TYPES`
+  allow-list (also an `enum` in the input schema), and `attachToId` must be a
+  numeric id.
+- **Tool annotations:** `qbo_attachables_upload` is marked destructive;
+  `qbo_navigate` and `qbo_status` are marked read-only.
+
 - **Search queries no longer send `ESCAPE` (#71).** QBO's query parser rejects
   `LIKE ... ESCAPE '\\'` with `QueryParserError`, so every `*_search` and the
   customer-list name prompt failed even for plain terms. Search SQL is now
