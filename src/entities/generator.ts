@@ -15,6 +15,7 @@
 
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { getClient } from "../utils/client.js";
+import { assertQboId } from "../utils/qbo-ids.js";
 import {
   buildDatedListSql,
   buildLikeSearchSql,
@@ -27,6 +28,21 @@ import type {
   ExtraHandler,
   ToolResult,
 } from "./types.js";
+
+/** MCP tool annotations shared by generated and hand-written tools. */
+export const READ_ONLY_ANNOTATIONS = { readOnlyHint: true } as const;
+export const DESTRUCTIVE_ANNOTATIONS = {
+  readOnlyHint: false,
+  destructiveHint: true,
+} as const;
+
+/** Mark every tool in a hand-written, read-only domain with readOnlyHint. */
+export function readOnlyTools(tools: Tool[]): Tool[] {
+  return tools.map((tool) => ({
+    ...tool,
+    annotations: { ...READ_ONLY_ANNOTATIONS },
+  }));
+}
 
 function pathFor(config: EntityConfig, override?: string): string {
   return override ?? config.name.toLowerCase();
@@ -85,6 +101,7 @@ export function generateEntityTools(config: EntityConfig): Tool[] {
       name: `${config.toolPrefix}_list`,
       description: `List ${config.name} records in QuickBooks Online with pagination${config.list.dateRange ? " and optional TxnDate range" : ""}.`,
       inputSchema: { type: "object", properties },
+      annotations: { ...READ_ONLY_ANNOTATIONS },
     });
   }
 
@@ -102,6 +119,7 @@ export function generateEntityTools(config: EntityConfig): Tool[] {
         },
         required: [config.get.idParam],
       },
+      annotations: { ...READ_ONLY_ANNOTATIONS },
     });
   }
 
@@ -111,6 +129,7 @@ export function generateEntityTools(config: EntityConfig): Tool[] {
       name: `${config.toolPrefix}_create`,
       description: `Create a new ${config.name} record in QuickBooks Online.`,
       inputSchema: { type: "object", properties, required },
+      annotations: { ...DESTRUCTIVE_ANNOTATIONS },
     });
   }
 
@@ -135,6 +154,7 @@ export function generateEntityTools(config: EntityConfig): Tool[] {
         properties,
         required: [config.update.idParam, "SyncToken", ...required],
       },
+      annotations: { ...DESTRUCTIVE_ANNOTATIONS },
     });
   }
 
@@ -159,6 +179,7 @@ export function generateEntityTools(config: EntityConfig): Tool[] {
         },
         required: [config.void.idParam, "SyncToken"],
       },
+      annotations: { ...DESTRUCTIVE_ANNOTATIONS },
     });
   }
 
@@ -185,6 +206,7 @@ export function generateEntityTools(config: EntityConfig): Tool[] {
         },
         required: ["term"],
       },
+      annotations: { ...READ_ONLY_ANNOTATIONS },
     });
   }
 
@@ -215,8 +237,8 @@ function builtinHandlers(config: EntityConfig): Map<string, Handler> {
     const { idParam } = config.get;
     const path = pathFor(config, config.get.pathSegment);
     map.set(`${prefix}_get`, async (args) => {
-      const id = args[idParam] as string;
-      const result = await getClient().get(`${path}/${id}`);
+      const id = assertQboId(args[idParam], idParam);
+      const result = await getClient().get(`${path}/${encodeURIComponent(id)}`);
       return jsonText(result);
     });
   }
@@ -241,8 +263,8 @@ function builtinHandlers(config: EntityConfig): Map<string, Handler> {
     const { prepare } = config.update;
     map.set(`${prefix}_update`, async (args) => {
       const body: Record<string, unknown> = {
-        Id: args[idParam] as string,
-        SyncToken: args.SyncToken as string,
+        Id: assertQboId(args[idParam], idParam),
+        SyncToken: assertQboId(args.SyncToken, "SyncToken"),
         sparse: true,
       };
       for (const k of fieldNames) {
@@ -266,15 +288,16 @@ function builtinHandlers(config: EntityConfig): Map<string, Handler> {
         ? { operation: "update", include: "void" }
         : { operation: "void" };
     map.set(`${prefix}_void`, async (args) => {
+      // Validate before the guard so no request is made for a bad id.
+      const body = {
+        Id: assertQboId(args[idParam], idParam),
+        SyncToken: assertQboId(args.SyncToken, "SyncToken"),
+        sparse: true,
+      };
       if (guard) {
         const refusal = await guard(args);
         if (refusal) return refusal;
       }
-      const body = {
-        Id: args[idParam] as string,
-        SyncToken: args.SyncToken as string,
-        sparse: true,
-      };
       const result = await getClient().post(path, body, params);
       return jsonText(result);
     });

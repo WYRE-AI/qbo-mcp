@@ -3,6 +3,7 @@
  */
 
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { readOnlyTools } from "../entities/generator.js";
 import { getClient } from "../utils/client.js";
 
 /** Tool name → QBO report endpoint name for reports sharing the
@@ -17,7 +18,7 @@ const datedReportEndpoints: Record<string, string> = {
 /**
  * Report domain tool definitions
  */
-export const reportTools: Tool[] = [
+export const reportTools: Tool[] = readOnlyTools([
   {
     name: "qbo_reports_profit_and_loss",
     description:
@@ -191,7 +192,7 @@ export const reportTools: Tool[] = [
       required: ["start_date", "end_date"],
     },
   },
-];
+]);
 
 /**
  * Handle report domain tool calls

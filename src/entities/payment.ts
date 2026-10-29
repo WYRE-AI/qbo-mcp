@@ -7,6 +7,7 @@
  */
 
 import { getClient } from "../utils/client.js";
+import { assertQboId } from "../utils/qbo-ids.js";
 import type { EntityConfig, EntityField } from "./types.js";
 
 const paymentFields: EntityField[] = [
@@ -73,14 +74,22 @@ export const paymentConfig: EntityConfig = {
   update: {
     idParam: "paymentId",
     fields: paymentUpdateFields,
-    note: "When Line is sent without CustomerRef, the tool reads the payment and resends its existing CustomerRef, because QuickBooks rejects a Line change without it.",
+    note: "When Line is sent without CustomerRef, the tool reads the payment and resends its existing CustomerRef, because QuickBooks rejects a Line change without it. Sending Line replaces all existing lines on the payment, so include every line you want to keep.",
     // QBO returns 400 code 2020 for a Line change without CustomerRef.
     prepare: async (args) => {
       if (args.Line === undefined || args.CustomerRef !== undefined) return null;
-      const paymentId = args.paymentId as string;
-      const response = (await getClient().get(`payment/${paymentId}`)) as {
-        Payment?: { CustomerRef?: { value?: string; name?: string } };
+      const paymentId = assertQboId(args.paymentId, "paymentId");
+      assertQboId(args.SyncToken, "SyncToken");
+      const response = (await getClient().get(
+        `payment/${encodeURIComponent(paymentId)}`
+      )) as {
+        Payment?: { Id?: string; CustomerRef?: { value?: string; name?: string } };
       };
+      if (String(response?.Payment?.Id) !== paymentId) {
+        throw new Error(
+          `Cannot verify payment ${paymentId}: the returned payment Id does not match the requested Id.`
+        );
+      }
       const existing = response?.Payment?.CustomerRef;
       if (!existing?.value) {
         return {
