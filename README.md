@@ -190,6 +190,8 @@ Tools are organized by domain. Call `qbo_navigate` with a domain name (e.g. `cus
 
 Each entity exposes some subset of `list`, `get`, `create`, `update`, `void`, `search`. Transactional entities support `startDate`/`endDate` filtering on the list operation. Updates are sparse and require the current `SyncToken` from a prior get. Void is exposed only where the QBO Accounting API supports it (Invoice uses `?operation=void`; Payment uses `?operation=update&include=void`). Customer has no void or delete — set `Active` to false on update to deactivate.
 
+QBO voids an invoice even when a payment is applied; the payment then stays as an unapplied credit. `qbo_invoices_void` therefore always reads the invoice first and fails closed: it refuses if the read can't be verified (wrong or missing invoice, non-numeric totals, a Fault), or if the SyncToken doesn't match the invoice's current one. It also refuses to void a paid or partly paid invoice unless called with `confirmPaidInvoiceVoid: true` (only pass it when the user explicitly asked); the confirmed void is logged to stderr. Ids, SyncTokens, and the realm id must be numeric strings. On `qbo_payments_update`, `CustomerRef` is required whenever `Line` changes (QBO rejects it otherwise); if you omit it, the tool reads the payment and resends its existing `CustomerRef`.
+
 **Sales workflow**
 - `qbo_customers_*` — list, get, create, update, search (no void; deactivate with `Active: false`)
 - `qbo_invoices_*` — list (Paid/Unpaid/Overdue status filter), get, create, update, void, send

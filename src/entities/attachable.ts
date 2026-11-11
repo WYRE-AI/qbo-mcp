@@ -8,7 +8,8 @@
 
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { getClient } from "../utils/client.js";
-import { jsonText } from "./generator.js";
+import { assertQboId } from "../utils/qbo-ids.js";
+import { DESTRUCTIVE_ANNOTATIONS, jsonText } from "./generator.js";
 import type { EntityConfig, EntityExtras, EntityField } from "./types.js";
 
 const attachableFields: EntityField[] = [
@@ -41,6 +42,28 @@ export const attachableConfig: EntityConfig = {
   update: { idParam: "attachableId", fields: attachableFields },
 };
 
+/** Transaction/name entities QBO allows an Attachable to be linked to. */
+export const ATTACHABLE_ENTITY_TYPES = [
+  "Bill",
+  "BillPayment",
+  "CreditMemo",
+  "Customer",
+  "Deposit",
+  "Employee",
+  "Estimate",
+  "Invoice",
+  "JournalEntry",
+  "Payment",
+  "Purchase",
+  "PurchaseOrder",
+  "RefundReceipt",
+  "SalesReceipt",
+  "TimeActivity",
+  "Transfer",
+  "Vendor",
+  "VendorCredit",
+] as const;
+
 const uploadTool: Tool = {
   name: "qbo_attachables_upload",
   description:
@@ -70,12 +93,14 @@ const uploadTool: Tool = {
       },
       attachToType: {
         type: "string",
+        enum: [...ATTACHABLE_ENTITY_TYPES],
         description:
-          'Optional QBO entity type to attach this file to, e.g. "Invoice", "Bill", "Customer"',
+          'Optional QBO entity type to attach this file to, e.g. "Invoice", "Bill", "Customer". Must be given together with attachToId.',
       },
       attachToId: {
         type: "string",
-        description: "Optional QBO entity ID to attach this file to",
+        description:
+          "Optional QBO entity ID to attach this file to. Must be given together with attachToType.",
       },
       includeOnSend: {
         type: "boolean",
@@ -85,6 +110,7 @@ const uploadTool: Tool = {
     },
     required: ["fileName", "contentType", "base64Data"],
   },
+  annotations: { ...DESTRUCTIVE_ANNOTATIONS },
 };
 
 /**
@@ -131,6 +157,33 @@ export const attachableExtras: EntityExtras = {
         attachToId?: string;
         includeOnSend?: boolean;
       };
+
+      // Validate before any request. An empty string counts as not given.
+      if (Boolean(a.attachToId) !== Boolean(a.attachToType)) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "attachToId and attachToType must be given together (or both omitted).",
+            },
+          ],
+          isError: true,
+        };
+      }
+      if (a.attachToId && a.attachToType) {
+        if (!(ATTACHABLE_ENTITY_TYPES as readonly string[]).includes(a.attachToType)) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Invalid attachToType "${a.attachToType}". Allowed values: ${ATTACHABLE_ENTITY_TYPES.join(", ")}.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        assertQboId(a.attachToId, "attachToId");
+      }
 
       const metadata = buildAttachableMetadata(a);
       const fileBuffer = Buffer.from(a.base64Data, "base64");

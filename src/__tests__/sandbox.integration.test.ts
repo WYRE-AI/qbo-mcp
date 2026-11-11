@@ -51,6 +51,45 @@ describe.skipIf(!hasCreds)("QBO sandbox integration", () => {
     expect(text).toMatch(/QueryResponse/);
   });
 
+  it("qbo_customers_search handles an apostrophe in the term", async () => {
+    // Before the escaping fix the term was sent as O''Brien and QBO answered
+    // 400 code 4000 (QueryParserError). QBO only accepts \' inside a literal.
+    const result = await callOk("qbo_customers_search", { term: "O'Brien" });
+    expect(result.content[0]?.text ?? "").toMatch(/QueryResponse/);
+  });
+
+  it("qbo_customers_search resists quote breakout", async () => {
+    // Guards against quote breakout: a term that escaped the literal would
+    // turn the LIKE into a match-all (or a parser error) instead of a narrow
+    // search.
+    const countRows = (text: string): number => {
+      const customers = JSON.parse(text)?.QueryResponse?.Customer;
+      return Array.isArray(customers) ? customers.length : 0;
+    };
+    const all = await callOk("qbo_customers_list", { maxResults: 1000 });
+    const total = countRows(all.content[0]?.text ?? "");
+
+    const terms = [
+      "x' OR 1=1",
+      "x' OR DisplayName LIKE '%",
+      "\\'",
+      "trail\\",
+      "\\' OR 1=1 --",
+    ];
+    for (const term of terms) {
+      const result = await callOk("qbo_customers_search", {
+        term,
+        maxResults: 1000,
+      });
+      if (total > 0) {
+        expect(
+          countRows(result.content[0]?.text ?? ""),
+          `term ${JSON.stringify(term)} returned every customer`,
+        ).toBeLessThan(total);
+      }
+    }
+  });
+
   it("tier-1: qbo_vendors_list returns Vendor rows", async () => {
     const result = await callOk("qbo_vendors_list", { maxResults: 5 });
     const text = result.content[0]?.text ?? "";

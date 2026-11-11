@@ -32,6 +32,7 @@ import {
   dispatchTool,
   entityDomains,
 } from "./entities/index.js";
+import { READ_ONLY_ANNOTATIONS } from "./entities/generator.js";
 import {
   credentialStore,
   parseEnvironment,
@@ -39,6 +40,7 @@ import {
   type QboCredentials,
 } from "./utils/client.js";
 import { resolveEnvCredentials } from "./utils/env-credentials.js";
+import { isQboId } from "./utils/qbo-ids.js";
 import { setServerRef } from "./utils/server-ref.js";
 
 export type { QboCredentials };
@@ -105,6 +107,7 @@ const navigateTool: Tool = {
     },
     required: ["domain"],
   },
+  annotations: { ...READ_ONLY_ANNOTATIONS },
 };
 
 /**
@@ -117,6 +120,7 @@ const statusTool: Tool = {
     type: "object",
     properties: {},
   },
+  annotations: { ...READ_ONLY_ANNOTATIONS },
 };
 
 /**
@@ -124,7 +128,8 @@ const statusTool: Tool = {
  *
  * Works with any transport: pass a getter that returns a (lowercased) header
  * value. Returns `{ creds }` on success, `{ error }` when required headers are
- * missing, or `{ error, status: 400 }` when the environment header is invalid.
+ * missing, or `{ error, status: 400 }` when the environment or realm header is
+ * invalid.
  */
 export function resolveGatewayCredentials(
   getHeader: (lowerName: string) => string | undefined,
@@ -147,6 +152,13 @@ export function resolveGatewayCredentials(
       error:
         "Gateway mode requires X-Qbo-Access-Token and X-Qbo-Realm-Id headers",
       status: 401,
+    };
+  }
+
+  if (!isQboId(realmId)) {
+    return {
+      error: "Invalid X-Qbo-Realm-Id header: expected a numeric realm id",
+      status: 400,
     };
   }
 

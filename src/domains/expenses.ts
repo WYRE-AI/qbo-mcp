@@ -3,13 +3,15 @@
  */
 
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { readOnlyTools } from "../entities/generator.js";
 import { getClient } from "../utils/client.js";
+import { assertQboId } from "../utils/qbo-ids.js";
 import { buildDatedListSql, type DatedListArgs } from "../utils/qbo-sql.js";
 
 /**
  * Expense domain tool definitions
  */
-export const expenseTools: Tool[] = [
+export const expenseTools: Tool[] = readOnlyTools([
   {
     name: "qbo_expenses_list_purchases",
     description:
@@ -98,7 +100,7 @@ export const expenseTools: Tool[] = [
       required: ["billId"],
     },
   },
-];
+]);
 
 /**
  * Handle expense domain tool calls
@@ -129,16 +131,16 @@ export async function handleExpenseTool(
     }
 
     case "qbo_expenses_get_purchase": {
-      const { purchaseId } = args as { purchaseId: string };
-      const purchase = await client.get(`purchase/${purchaseId}`);
+      const purchaseId = assertQboId(args.purchaseId, "purchaseId");
+      const purchase = await client.get(`purchase/${encodeURIComponent(purchaseId)}`);
       return {
         content: [{ type: "text", text: JSON.stringify(purchase, null, 2) }],
       };
     }
 
     case "qbo_expenses_get_bill": {
-      const { billId } = args as { billId: string };
-      const bill = await client.get(`bill/${billId}`);
+      const billId = assertQboId(args.billId, "billId");
+      const bill = await client.get(`bill/${encodeURIComponent(billId)}`);
       return {
         content: [{ type: "text", text: JSON.stringify(bill, null, 2) }],
       };

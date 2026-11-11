@@ -11,11 +11,16 @@ import {
 import { parseEnvironment } from "../utils/client.js";
 
 describe("escapeQboString", () => {
-  it("doubles single quotes per SQL string-literal escaping", () => {
-    expect(escapeQboString("O'Brien")).toBe("O''Brien");
+  it("backslash-escapes single quotes (QBO rejects SQL doubling)", () => {
+    expect(escapeQboString("O'Brien")).toBe("O\\'Brien");
     expect(escapeQboString("'; DROP TABLE Customer; --")).toBe(
-      "''; DROP TABLE Customer; --"
+      "\\'; DROP TABLE Customer; --"
     );
+  });
+
+  it("escapes backslashes first so a quote cannot be un-escaped", () => {
+    expect(escapeQboString("trailing\\")).toBe("trailing\\\\");
+    expect(escapeQboString("a\\'b")).toBe("a\\\\\\'b");
   });
 
   it("leaves clean strings untouched", () => {
@@ -29,19 +34,45 @@ describe("escapeQboString", () => {
     const malicious = "x%' OR '1'='1";
     const safe = escapeQboString(malicious);
     const sql = `WHERE DisplayName LIKE '%${safe}%'`;
-    // The closing quote of OR '1'='1 is now doubled and stays inside the literal.
-    expect(sql).toBe("WHERE DisplayName LIKE '%x%'' OR ''1''=''1%'");
+    // Every quote of OR '1'='1 is now backslash-escaped and stays inside the literal.
+    expect(sql).toBe("WHERE DisplayName LIKE '%x%\\' OR \\'1\\'=\\'1%'");
+  });
+
+  it("never leaves a quote preceded by an even number of backslashes", () => {
+    const inputs = [
+      "'; DROP TABLE Customer; --",
+      "a\\'b",
+      "\\\\'",
+      "x\\",
+      "'''",
+      "\\'\\'",
+    ];
+    for (const input of inputs) {
+      for (const out of [escapeQboString(input), escapeQboSearchTerm(input)]) {
+        for (const m of out.matchAll(/'/g)) {
+          let n = 0;
+          for (let i = m.index - 1; i >= 0 && out[i] === "\\"; i--) n++;
+          expect(n % 2, `${input} -> ${out}`).toBe(1);
+        }
+        // Also must not end in an odd run of backslashes (would eat the closing quote).
+        expect(out.match(/\\*$/)![0].length % 2).toBe(0);
+      }
+    }
   });
 });
 
 describe("escapeQboSearchTerm", () => {
-  it("doubles quotes and backslashes but leaves % and _ as QBO LIKE sees them", () => {
+  it("escapes quotes and backslashes but leaves % and _ as QBO LIKE sees them", () => {
     expect(escapeQboSearchTerm("50%")).toBe("50%");
     expect(escapeQboSearchTerm("foo_bar")).toBe("foo_bar");
     expect(escapeQboSearchTerm("plain")).toBe("plain");
-    expect(escapeQboSearchTerm("O'Brien")).toBe("O''Brien");
+    expect(escapeQboSearchTerm("O'Brien")).toBe("O\\'Brien");
     expect(escapeQboSearchTerm("a\\b")).toBe("a\\\\b");
     expect(escapeQboSearchTerm("trailing\\")).toBe("trailing\\\\");
+    expect(escapeQboSearchTerm("a\\'b")).toBe("a\\\\\\'b");
+    expect(escapeQboSearchTerm("'; DROP TABLE Customer; --")).toBe(
+      "\\'; DROP TABLE Customer; --"
+    );
   });
 });
 
@@ -54,20 +85,20 @@ describe("buildLikeSearchSql", () => {
     expect(sql).not.toContain("ESCAPE");
   });
 
-  it("quote-escapes the term and pages past 1000", () => {
+  it("backslash-escapes the quote in the term and pages past 1000", () => {
     const sql = buildLikeSearchSql("Customer", "DisplayName", "O'Brien", {
       startPosition: 1001,
       maxResults: 25,
     });
     expect(sql).toBe(
-      "SELECT * FROM Customer WHERE DisplayName LIKE '%O''Brien%' STARTPOSITION 1001 MAXRESULTS 25"
+      "SELECT * FROM Customer WHERE DisplayName LIKE '%O\\'Brien%' STARTPOSITION 1001 MAXRESULTS 25"
     );
   });
 
   it("keeps a breakout attempt inside the LIKE literal", () => {
     const sql = buildLikeSearchSql("Customer", "DisplayName", "x%' OR '1'='1");
     expect(sql).toBe(
-      "SELECT * FROM Customer WHERE DisplayName LIKE '%x%'' OR ''1''=''1%' STARTPOSITION 1 MAXRESULTS 100"
+      "SELECT * FROM Customer WHERE DisplayName LIKE '%x%\\' OR \\'1\\'=\\'1%' STARTPOSITION 1 MAXRESULTS 100"
     );
   });
 });

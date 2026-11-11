@@ -10,12 +10,22 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { attachInvoiceCard } from "../card.builder.js";
 import { getClient } from "../utils/client.js";
 import { elicitText } from "../utils/elicitation.js";
+import { assertQboId } from "../utils/qbo-ids.js";
 import {
   buildDatedListSql,
   type DatedListArgs,
 } from "../utils/qbo-sql.js";
-import { jsonText } from "./generator.js";
-import type { EntityConfig, EntityExtras, EntityField } from "./types.js";
+import {
+  DESTRUCTIVE_ANNOTATIONS,
+  jsonText,
+  READ_ONLY_ANNOTATIONS,
+} from "./generator.js";
+import type {
+  EntityConfig,
+  EntityExtras,
+  EntityField,
+  ToolResult,
+} from "./types.js";
 
 const invoiceFields: EntityField[] = [
   {
@@ -62,6 +72,85 @@ const invoiceUpdateFields: EntityField[] = invoiceFields.map((field) =>
     : field
 );
 
+/**
+ * QBO voids an invoice even when a payment is applied: the payment is left as
+ * an unapplied credit. Always read the invoice first and fail closed: if the
+ * read cannot be verified as this invoice with numeric totals, refuse. Paid
+ * invoices are refused unless the caller explicitly confirms.
+ */
+async function guardPaidInvoiceVoid(
+  args: Record<string, unknown>
+): Promise<ToolResult | null> {
+  const invoiceId = assertQboId(args.invoiceId, "invoiceId");
+  const syncToken = assertQboId(args.SyncToken, "SyncToken");
+  const refuse = (text: string): ToolResult => ({
+    isError: true,
+    content: [{ type: "text", text }],
+  });
+  const unverifiable = (reason: string): ToolResult =>
+    refuse(
+      `Cannot verify payment state for invoice ${invoiceId}, refusing to void. ${reason}`
+    );
+
+  const response = (await getClient().get(
+    `invoice/${encodeURIComponent(invoiceId)}`
+  )) as unknown;
+  if (typeof response !== "object" || response === null) {
+    return unverifiable("QuickBooks returned an unexpected response.");
+  }
+  if ("Fault" in response) {
+    return unverifiable("QuickBooks returned a Fault.");
+  }
+  const invoice = (response as { Invoice?: unknown }).Invoice;
+  if (typeof invoice !== "object" || invoice === null || Array.isArray(invoice)) {
+    return unverifiable("The response did not contain an Invoice.");
+  }
+  const { Id, SyncToken, TotalAmt, Balance, LinkedTxn } = invoice as {
+    Id?: unknown;
+    SyncToken?: unknown;
+    TotalAmt?: unknown;
+    Balance?: unknown;
+    LinkedTxn?: unknown;
+  };
+  if (String(Id) !== invoiceId) {
+    return unverifiable("The returned invoice Id does not match the requested Id.");
+  }
+  if (
+    typeof Balance !== "number" ||
+    !Number.isFinite(Balance) ||
+    typeof TotalAmt !== "number" ||
+    !Number.isFinite(TotalAmt)
+  ) {
+    return unverifiable("Balance or TotalAmt is missing or not a number.");
+  }
+  if (LinkedTxn !== undefined && !Array.isArray(LinkedTxn)) {
+    return unverifiable("LinkedTxn is not an array.");
+  }
+  if (SyncToken !== syncToken) {
+    return refuse(
+      `Refusing to void invoice ${invoiceId}: the SyncToken is stale (current SyncToken is ${String(SyncToken)}). Re-read the invoice and retry with its current SyncToken.`
+    );
+  }
+
+  const payments = ((LinkedTxn ?? []) as { TxnId?: unknown; TxnType?: unknown }[]).filter(
+    (t) => t?.TxnType === "Payment"
+  );
+  // Cent tolerance so float drift (100 vs 99.999) is not read as a payment.
+  const partlyPaid = TotalAmt - Balance > 0.005;
+  if (payments.length === 0 && !partlyPaid) return null;
+
+  const ids = payments.map((p) => String(p.TxnId)).join(", ") || "none listed";
+  if (args.confirmPaidInvoiceVoid === true) {
+    console.error(
+      `[qbo] confirmed paid-invoice void: invoice ${invoiceId} TotalAmt ${TotalAmt} Balance ${Balance} payments ${ids}`
+    );
+    return null;
+  }
+  return refuse(
+    `Refusing to void invoice ${invoiceId}: it has a payment applied (TotalAmt ${TotalAmt}, Balance ${Balance}, linked payment Ids: ${ids}). Voiding would leave the payment as an unapplied credit. Pass confirmPaidInvoiceVoid: true only if the user explicitly asked to void a paid invoice.`
+  );
+}
+
 export const invoiceConfig: EntityConfig = {
   name: "Invoice",
   toolPrefix: "qbo_invoices",
@@ -74,7 +163,17 @@ export const invoiceConfig: EntityConfig = {
   void: {
     idParam: "invoiceId",
     style: "operation",
-    note: "QuickBooks will not void an invoice that still has a payment applied.",
+    description:
+      "Voids the invoice in QuickBooks. This works even if a payment has already been applied, and the payment then stays as an unapplied credit. Check the invoice's balance and payments first, and only void a paid invoice if the user explicitly asks for it.",
+    note: "Id and SyncToken are required; confirmPaidInvoiceVoid: true is needed when a payment is applied.",
+    extraProperties: {
+      confirmPaidInvoiceVoid: {
+        type: "boolean",
+        description:
+          "Set to true only when the user explicitly asked to void an invoice that has a payment applied. Without it, the tool refuses to void a paid or partly paid invoice.",
+      },
+    },
+    guard: guardPaidInvoiceVoid,
   },
 };
 
@@ -108,6 +207,7 @@ const invoicesListTool: Tool = {
       },
     },
   },
+  annotations: { ...READ_ONLY_ANNOTATIONS },
 };
 
 const invoicesSendTool: Tool = {
@@ -126,14 +226,15 @@ const invoicesSendTool: Tool = {
     },
     required: ["invoiceId"],
   },
+  annotations: { ...DESTRUCTIVE_ANNOTATIONS },
 };
 
 export const invoiceExtras: EntityExtras = {
   tools: [invoicesListTool, invoicesSendTool],
   handlers: {
     qbo_invoices_get: async (args) => {
-      const { invoiceId } = args as { invoiceId: string };
-      const result = await getClient().get(`invoice/${invoiceId}`);
+      const invoiceId = assertQboId(args.invoiceId, "invoiceId");
+      const result = await getClient().get(`invoice/${encodeURIComponent(invoiceId)}`);
       // MCP Apps: attach the normalized card payload the ui:// invoice card
       // renders from. Best-effort — no card just means no UI surface, and
       // the full JSON payload is otherwise unchanged.
@@ -196,11 +297,16 @@ export const invoiceExtras: EntityExtras = {
     },
 
     qbo_invoices_send: async (args) => {
-      const { invoiceId, email } = args as { invoiceId: string; email?: string };
+      const invoiceId = assertQboId(args.invoiceId, "invoiceId");
+      const { email } = args as { email?: string };
       const params: Record<string, string> = {};
       if (email) params.sendTo = email;
       return jsonText(
-        await getClient().post(`invoice/${invoiceId}/send`, undefined, params)
+        await getClient().post(
+          `invoice/${encodeURIComponent(invoiceId)}/send`,
+          undefined,
+          params
+        )
       );
     },
   },

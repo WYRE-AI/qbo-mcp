@@ -9,17 +9,70 @@ manually maintained on feature branches and gets folded into the next release.
 
 ### Fixed
 
+- **TaxCode ids accept `TAX` and `NON`.** `EntityConfig` gained an optional
+  `idPattern` (default numeric); only `qbo_tax_codes_*` widens it, to
+  `/^(?:\d+|TAX|NON)$/`, because US companies expose those pseudo tax codes.
+  Every other entity stays numeric-only, and SyncTokens are always numeric.
+- **`qbo_attachables_upload` validates its attach target before any request.**
+  `attachToType` and `attachToId` must be given together (empty string counts as
+  not given), `attachToType` must be one of the new `ATTACHABLE_ENTITY_TYPES`
+  allow-list (also an `enum` in the input schema), and `attachToId` must be a
+  numeric id.
+- **Tool annotations:** `qbo_attachables_upload` is marked destructive;
+  `qbo_navigate` and `qbo_status` are marked read-only.
+
 - **Search queries no longer send `ESCAPE` (#71).** QBO's query parser rejects
   `LIKE ... ESCAPE '\\'` with `QueryParserError`, so every `*_search` and the
   customer-list name prompt failed even for plain terms. Search SQL is now
-  `LIKE '%term%'` with quotes and backslashes doubled. `%` stays QBO's only
-  LIKE wildcard; `_` is literal.
+  `LIKE '%term%'` with no `ESCAPE` clause. `%` stays QBO's only LIKE wildcard;
+  `_` is literal. (Quote handling was corrected afterwards; see the apostrophe
+  entry below.)
+- **Apostrophes in search terms no longer fail.** QBO does not accept SQL
+  quote doubling: `LIKE '%O''Brien%'` returned 400 code 4000
+  (QueryParserError). `escapeQboSearchTerm` and `escapeQboString` now escape
+  backslashes first, then turn `'` into `\'`, so `O'Brien` is sent as
+  `O\'Brien` and a trailing or doubled backslash cannot un-escape a quote.
+  Backslashes cannot be matched literally in QBO `LIKE` searches (a lone `\`
+  term matches every customer), but they remain safely escaped.
+- **`qbo_payments_update` no longer fails when `Line` changes without
+  `CustomerRef`.** QBO rejects that with 400 code 2020. The tool now reads the
+  payment and resends its existing `CustomerRef` (an error asks for it if the
+  payment has none). `CustomerRef` stays optional in the schema; the extra read
+  only happens when `Line` is sent without it.
+- **`qbo_invoices_void` description corrected and paid invoices guarded.** The
+  old text claimed QuickBooks will not void an invoice with a payment applied.
+  It does, leaving the payment as an unapplied credit. The tool now reads the
+  invoice and refuses to void one with an applied Payment or a Balance below
+  TotalAmt unless `confirmPaidInvoiceVoid: true` is passed. The flag is never
+  sent to QBO.
+- **The paid-invoice void guard now fails closed.** It always reads the
+  invoice, even with `confirmPaidInvoiceVoid: true`, and refuses ("Cannot
+  verify payment state for invoice <id>, refusing to void.") unless the read
+  is a non-error response whose `Invoice` is an object with the requested Id
+  and numeric, finite `Balance` and `TotalAmt` (and an array `LinkedTxn`, if
+  present). Paid means `TotalAmt - Balance > 0.005` or a linked Payment, so
+  float drift is not read as a payment. It also refuses when the SyncToken
+  does not match the invoice's current one. A confirmed paid-invoice void is
+  logged to stderr (no tokens).
+- **QuickBooks ids and realm ids are validated.** Entity ids and SyncTokens
+  must be numeric strings (`/^\d+$/`), checked before any request in the
+  generated get/update/void handlers, the void guard, the payment update
+  read, `qbo_invoices_get`, `qbo_invoices_send`, and the expense get tools.
+  Ids are `encodeURIComponent`-encoded in URL paths, and a payment read that
+  returns a different Id is an error. The realm id (`X-Qbo-Realm-Id`,
+  `QBO_REALM_ID`) must also be numeric: gateway mode returns 400, and the
+  client constructor throws.
+- **`qbo_payments_update` description** now warns that sending `Line`
+  replaces all existing lines on the payment.
 - **`startPosition` is no longer capped at 1000 (#71).** Only `maxResults` is
   limited to QBO's 1000-row page size. List and search offsets can page past
   the first thousand rows, up to a signed 32-bit ceiling.
 
 ### Added
 
+- **MCP tool annotations.** Generated list/get/search tools, `qbo_invoices_list`,
+  and the expense and report tools carry `readOnlyHint: true`; create, update,
+  void, and `qbo_invoices_send` carry `readOnlyHint: false, destructiveHint: true`.
 - **Sparse update for Customer, Invoice, and Payment (#71).**
   `qbo_customers_update`, `qbo_invoices_update`, and `qbo_payments_update`
   follow the existing Id + SyncToken sparse-update pattern. Customer update

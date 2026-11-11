@@ -265,7 +265,7 @@ export async function startHttpTransport(): Promise<HttpServer> {
               res.writeHead(400, { "Content-Type": "application/json" });
               res.end(
                 JSON.stringify({
-                  error: "Invalid X-Qbo-Environment header",
+                  error: "Invalid X-Qbo-Environment or X-Qbo-Realm-Id header",
                   message: error,
                 })
               );

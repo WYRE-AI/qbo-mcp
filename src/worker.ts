@@ -96,7 +96,7 @@ export default {
         if (error || !gwCreds) {
           return json(
             {
-              error: status === 400 ? "Invalid X-Qbo-Environment header" : "Missing credentials",
+              error: status === 400 ? "Invalid X-Qbo-Environment or X-Qbo-Realm-Id header" : "Missing credentials",
               message: error,
               required: ["X-Qbo-Access-Token", "X-Qbo-Realm-Id"],
               optional: ["X-Qbo-Environment (production|sandbox, default production)"],

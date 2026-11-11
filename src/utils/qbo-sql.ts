@@ -10,10 +10,13 @@
 
 /**
  * Escape a string for safe inclusion inside single-quoted QBO query literals.
- * QBO follows standard SQL: a single quote is doubled.
+ * QBO does NOT follow standard SQL doubling: `''` fails with QueryParserError
+ * (code 4000). It accepts only a backslash-escaped quote, `\'`. Backslashes are
+ * escaped first (`\` -> `\\`), then each `'` becomes `\'`, so a caller's own
+ * backslash cannot un-escape the quote.
  */
 export function escapeQboString(value: string): string {
-  return value.replace(/'/g, "''");
+  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }
 
 /**
@@ -23,12 +26,21 @@ export function escapeQboString(value: string): string {
  * that includes one fails with QueryParserError for every term. LIKE's only
  * wildcard is `%` (`_` is literal), so `%` in the term is left as a wildcard.
  *
- * Single quotes are doubled. Backslashes are doubled because QBO also treats
- * `\'` as an escaped apostrophe; a trailing backslash would otherwise escape
+ * QBO does NOT follow standard SQL doubling: `''` fails with QueryParserError
+ * (code 4000) and only `\'` is accepted. Backslashes are escaped first
+ * (`\` -> `\\`), then `'` becomes `\'`, so a trailing backslash cannot escape
  * the closing quote of the literal.
+ *
+ * Sandbox run 2026-10-29: QBO cannot match a literal backslash through LIKE.
+ * With the term escaped to `\\` (two chars), the term `\` (one backslash)
+ * matched every customer, and `A\B` did not find a customer named exactly
+ * `A\B` (nor did a doubled backslash). Backslashes are still escaped so a
+ * trailing or embedded one can never escape the closing quote; breakout probes
+ * (`x' OR 1=1`, `\'`, trailing backslash, `\' OR 1=1 --`) all ran without a
+ * parser error and returned no extra rows.
  */
 export function escapeQboSearchTerm(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/'/g, "''");
+  return escapeQboString(value);
 }
 
 /**
