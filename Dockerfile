@@ -42,6 +42,10 @@ RUN npm prune --omit=dev && npm cache clean --force
 # Create logs directory
 RUN mkdir -p /app/logs && chown -R qbo:qbo /app
 
+# Security: patch OS packages and drop the npm CLI, which the runtime does not use
+RUN apk upgrade --no-cache && \
+    rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+
 # Switch to non-root user
 USER qbo
 
