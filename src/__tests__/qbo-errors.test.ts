@@ -99,6 +99,16 @@ describe("intuit_tid capture", () => {
     expect(err).not.toHaveProperty("body");
   });
 
+  it("treats a top-level Fault in an HTTP 200 body as an error", async () => {
+    mockFetch(200, validationFault, { intuit_tid: "1-fault-200" });
+    const err = await caught(credentialStore.run(CREDS, () => getClient().get("customer/1")));
+
+    expect(err).toBeInstanceOf(QboApiError);
+    expect(err.intuitTid).toBe("1-fault-200");
+    expect(err.message).toContain("code 6240");
+    expect(err.message).not.toContain(SECRET_DETAIL);
+  });
+
   it("captures intuit_tid on multipart upload failures too", async () => {
     mockFetch(500, "boom", { intuit_tid: "1-upload-9" });
     const err = await caught(

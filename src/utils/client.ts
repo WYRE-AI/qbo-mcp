@@ -133,7 +133,8 @@ function summarize(
 
 /**
  * Read Intuit's `intuit_tid` response header, log it at debug level (never the
- * body), and turn non-2xx responses into a QboApiError.
+ * body), and turn non-2xx responses, and 2xx bodies carrying a top-level
+ * `Fault`, into a QboApiError.
  */
 async function handleResponse(
   response: Response,
@@ -159,7 +160,15 @@ async function handleResponse(
 
   // Handle 204 No Content
   if (response.status === 204) return null;
-  return response.json();
+
+  // Intuit can return HTTP 200 with a top-level `Fault`. Treat it as an error
+  // so its `Detail` never reaches tool output.
+  const text = await response.text();
+  const parsed = JSON.parse(text) as Record<string, unknown> | null;
+  if (parsed && (parsed.Fault || parsed.fault)) {
+    throw new QboApiError(response.status, method, path, intuitTid, parseQboFault(text));
+  }
+  return parsed;
 }
 
 /**

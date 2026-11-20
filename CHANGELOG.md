@@ -25,6 +25,9 @@ manually maintained on feature branches and gets folded into the next release.
   only caller is the gateway. Production runs the Node entry
   (`node dist/index.js` per the Dockerfile), which already enforced S2S.
   Worker deployments must set `CONDUIT_S2S_SECRET`.
+- **A top-level `Fault` in an HTTP 200 response is now an error.** Intuit can
+  return `Fault` with a 200 status; it is thrown as a `QboApiError` (code,
+  message, `intuit_tid` only) instead of being returned as tool output.
 
 ### Fixed
 
