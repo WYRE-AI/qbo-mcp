@@ -267,13 +267,14 @@ export function createMcpServer(): Server {
       };
     } catch (error) {
       // Tag 401s structurally so a gateway can detect "refresh and retry". The
-      // message starts with a stable prefix and the body is preserved verbatim.
+      // message starts with a stable prefix; only the fault code, message
+      // and intuit_tid follow, never the raw upstream body.
       if (error instanceof QboApiError && error.isUnauthorized) {
         return {
           content: [
             {
               type: "text",
-              text: `QBO_UNAUTHORIZED: access token rejected by QuickBooks Online (realm may also be wrong). Gateway should refresh the OAuth token and retry. Upstream body: ${error.body}`,
+              text: `QBO_UNAUTHORIZED: access token rejected by QuickBooks Online (realm may also be wrong). Gateway should refresh the OAuth token and retry. Upstream: ${error.summary}`,
             },
           ],
           isError: true,

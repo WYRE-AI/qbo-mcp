@@ -7,6 +7,28 @@ manually maintained on feature branches and gets folded into the next release.
 
 ## [Unreleased]
 
+### Security
+
+- **Capture `intuit_tid` from every QBO response.** `QboApiError` carries it
+  and includes it in its message; with `LOG_LEVEL=debug` each response logs
+  one line (method, path, status, `intuit_tid`). Quote it to Intuit support.
+- **QBO error bodies are no longer returned or kept.** `QboApiError` drops the
+  upstream body (`body` property removed) and keeps only the fault code, a
+  short message and `intuit_tid`. The `QBO_UNAUTHORIZED` tool result now
+  reads `Upstream: <code>; <message>; intuit_tid: <id>` instead of
+  `Upstream body: <raw body>`. Fault `Detail`, which can echo entity values,
+  is discarded.
+- **Cloudflare Worker `/mcp` requires S2S auth.** The Worker now verifies
+  `X-Gateway-S2S` against the `CONDUIT_S2S_SECRET` secret, same as the Node
+  HTTP entry, and refuses all `/mcp` requests (503) when the secret is unset.
+  The wildcard CORS headers and OPTIONS preflight handler are removed; the
+  only caller is the gateway. Production runs the Node entry
+  (`node dist/index.js` per the Dockerfile), which already enforced S2S.
+  Worker deployments must set `CONDUIT_S2S_SECRET`.
+- **A top-level `Fault` in an HTTP 200 response is now an error.** Intuit can
+  return `Fault` with a 200 status; it is thrown as a `QboApiError` (code,
+  message, `intuit_tid` only) instead of being returned as tool output.
+
 ### Fixed
 
 - **Search queries no longer send `ESCAPE` (#71).** QBO's query parser rejects

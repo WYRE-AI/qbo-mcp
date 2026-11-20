@@ -23,6 +23,12 @@
  *
  * `tools/list` and `initialize` work without credentials; only `tools/call`
  * requires them.
+ *
+ * `/mcp` is fail-closed: it requires the gateway's X-Gateway-S2S header,
+ * verified against the CONDUIT_S2S_SECRET Worker secret (same check as the
+ * Node HTTP entry in index.ts). If the secret is not configured, `/mcp`
+ * refuses every request. `/health` stays unauthenticated. There is no CORS:
+ * the only caller is the gateway, never a browser.
  */
 
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
@@ -33,6 +39,7 @@ import {
   parseEnvironment,
   type QboCredentials,
 } from "./mcp-server.js";
+import { verifyS2sHeader, S2S_HEADER } from "./s2s-verify.js";
 
 export interface Env {
   QBO_ACCESS_TOKEN?: string;
@@ -40,30 +47,13 @@ export interface Env {
   QBO_ENV?: string;
   AUTH_MODE?: string;
   LOG_LEVEL?: string;
+  CONDUIT_S2S_SECRET?: string;
 }
-
-const CORS_HEADERS: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers":
-    "Content-Type, Accept, Authorization, Mcp-Session-Id, MCP-Protocol-Version, X-Qbo-Access-Token, X-Qbo-Realm-Id, X-Qbo-Environment",
-  "Access-Control-Expose-Headers": "Mcp-Session-Id",
-};
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
-  });
-}
-
-function withCors(res: Response): Response {
-  const headers = new Headers(res.headers);
-  for (const [k, v] of Object.entries(CORS_HEADERS)) headers.set(k, v);
-  return new Response(res.body, {
-    status: res.status,
-    statusText: res.statusText,
-    headers,
+    headers: { "Content-Type": "application/json" },
   });
 }
 
@@ -71,17 +61,25 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    // CORS preflight
-    if (request.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: CORS_HEADERS });
-    }
-
     // Shallow, unauthenticated liveness probe.
     if (url.pathname === "/health" || url.pathname === "/healthz") {
       return json({ status: "ok" });
     }
 
     if (url.pathname === "/mcp") {
+      // Fail closed: no configured secret means no requests, and a configured
+      // secret is always enforced before credentials are read.
+      const s2sSecret = (env.CONDUIT_S2S_SECRET ?? "").trim();
+      if (!s2sSecret) {
+        return json({ error: "S2S auth is not configured: CONDUIT_S2S_SECRET is empty." }, 503);
+      }
+      if (!verifyS2sHeader(request.headers.get(S2S_HEADER) ?? undefined, s2sSecret)) {
+        return json(
+          { error: "Missing or invalid X-Gateway-S2S header: this endpoint only accepts requests signed by the gateway." },
+          401,
+        );
+      }
+
       const isGatewayMode = (env.AUTH_MODE ?? "env") === "gateway";
 
       let creds: QboCredentials | undefined;
@@ -125,8 +123,7 @@ export default {
 
       const run = async (): Promise<Response> => {
         try {
-          const response = await transport.handleRequest(request);
-          return withCors(response);
+          return await transport.handleRequest(request);
         } finally {
           await transport.close();
           await server.close();
