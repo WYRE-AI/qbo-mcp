@@ -14,6 +14,8 @@ Model Context Protocol (MCP) server for the [QuickBooks Online Accounting API](h
 
 > **Note on registry auth:** This server depends only on public npm packages, so the Cloudflare and DigitalOcean cloud builders install its dependencies anonymously — no token is required for one-click deploy. (If a future release adds a private `@wyre-ai/*` dependency, you would supply a GitHub PAT with `read:packages` as a build variable — `NODE_AUTH_TOKEN` for Cloudflare Workers, a build-time `GITHUB_TOKEN` secret for DigitalOcean.)
 >
+> **Cloudflare Worker auth:** The Worker's `/mcp` endpoint is fail-closed. Set the `CONDUIT_S2S_SECRET` Worker secret (`openssl rand -hex 32`); requests must carry a matching `X-Gateway-S2S` header, and with no secret configured `/mcp` returns 503. `/health` stays unauthenticated.
+>
 > **Installing the published package:** The released package is published to the [GitHub Packages](https://github.com/WYRE-AI/qbo-mcp/pkgs/npm/qbo-mcp) npm registry, which requires authentication on every install (even for public packages). To install it, authenticate npm to `npm.pkg.github.com` with a GitHub PAT that has `read:packages`:
 >
 > ```bash

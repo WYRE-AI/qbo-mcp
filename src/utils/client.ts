@@ -39,19 +39,68 @@ interface QboQueryResponse {
   QueryResponse: Record<string, unknown>;
 }
 
+/** Longest fault message echoed back to callers. */
+const MAX_FAULT_MESSAGE_LENGTH = 300;
+
+/**
+ * The only parts of a QBO fault we surface: a code and a short message.
+ * The upstream body (including `Detail`, which can echo entity values) is
+ * never kept, returned, or logged.
+ */
+interface QboFault {
+  code?: string;
+  message?: string;
+}
+
+/**
+ * Extract the first fault's code and message from a QBO error body. Intuit
+ * capitalises these keys inconsistently (`Fault.Error[].Message` on API
+ * errors, `fault.error[].message` on auth errors), so both are accepted.
+ * Anything unparseable yields an empty fault.
+ */
+export function parseQboFault(responseBody: string): QboFault {
+  try {
+    const parsed = JSON.parse(responseBody) as Record<string, unknown>;
+    const fault = (parsed.Fault ?? parsed.fault) as
+      | Record<string, unknown>
+      | undefined;
+    const errors = (fault?.Error ?? fault?.error) as
+      | Record<string, unknown>[]
+      | undefined;
+    const first = errors?.[0];
+    if (!first) return {};
+    const code = first.code ?? first.Code;
+    const message = first.Message ?? first.message;
+    return {
+      code:
+        typeof code === "string" || typeof code === "number"
+          ? String(code)
+          : undefined,
+      message:
+        typeof message === "string"
+          ? message.slice(0, MAX_FAULT_MESSAGE_LENGTH)
+          : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
 /**
  * Structured error thrown by the REST client when QBO returns non-2xx. The
  * gateway uses `status === 401` to decide whether to refresh the access token
- * and retry the request.
+ * and retry the request. Carries Intuit's `intuit_tid` (quote it to Intuit
+ * support) plus the fault code and message; never the raw upstream body.
  */
 export class QboApiError extends Error {
   constructor(
     public readonly status: number,
     public readonly method: string,
     public readonly path: string,
-    public readonly body: string
+    public readonly intuitTid: string | undefined,
+    public readonly fault: QboFault = {}
   ) {
-    super(`QBO API error ${method} /${path} (${status}): ${body}`);
+    super(`QBO API error ${method} /${path} (${status})${summarize(intuitTid, fault, ": ")}`);
     this.name = "QboApiError";
   }
 
@@ -62,6 +111,55 @@ export class QboApiError extends Error {
   get isUnauthorized(): boolean {
     return this.status === 401;
   }
+
+  /** Fault code, message and intuit_tid only, safe to return to MCP callers. */
+  get summary(): string {
+    return summarize(this.intuitTid, this.fault, "");
+  }
+}
+
+function summarize(
+  intuitTid: string | undefined,
+  fault: QboFault,
+  prefix: string
+): string {
+  const parts = [
+    fault.code && `code ${fault.code}`,
+    fault.message,
+    intuitTid && `intuit_tid: ${intuitTid}`,
+  ].filter(Boolean);
+  return parts.length > 0 ? prefix + parts.join("; ") : "";
+}
+
+/**
+ * Read Intuit's `intuit_tid` response header, log it at debug level (never the
+ * body), and turn non-2xx responses into a QboApiError.
+ */
+async function handleResponse(
+  response: Response,
+  method: string,
+  path: string
+): Promise<unknown> {
+  const intuitTid = response.headers.get("intuit_tid") ?? undefined;
+  if (process.env.LOG_LEVEL === "debug") {
+    console.error(
+      `QBO ${method} /${path} -> ${response.status} intuit_tid=${intuitTid ?? "none"}`
+    );
+  }
+
+  if (!response.ok) {
+    throw new QboApiError(
+      response.status,
+      method,
+      path,
+      intuitTid,
+      parseQboFault(await response.text())
+    );
+  }
+
+  // Handle 204 No Content
+  if (response.status === 204) return null;
+  return response.json();
 }
 
 /**
@@ -110,19 +208,7 @@ class QboClient {
       options.body = isTextBody ? (body as string) : JSON.stringify(body);
     }
 
-    const response = await fetch(url, options);
-
-    if (!response.ok) {
-      const responseBody = await response.text();
-      throw new QboApiError(response.status, method, path, responseBody);
-    }
-
-    // Handle 204 No Content
-    if (response.status === 204) {
-      return null;
-    }
-
-    return response.json();
+    return handleResponse(await fetch(url, options), method, path);
   }
 
   /**
@@ -158,12 +244,7 @@ class QboClient {
       },
       body: form,
     });
-    if (!response.ok) {
-      const responseBody = await response.text();
-      throw new QboApiError(response.status, "POST", path, responseBody);
-    }
-    if (response.status === 204) return null;
-    return response.json();
+    return handleResponse(response, "POST", path);
   }
 
   /**

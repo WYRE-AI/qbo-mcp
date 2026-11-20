@@ -6,12 +6,21 @@
  * transport the Worker uses in production.
  */
 
+import { createHmac } from "node:crypto";
 import { describe, it, expect } from "vitest";
 import worker, { type Env } from "../worker.js";
+
+const S2S_SECRET = "worker-s2s-do-not-log-4c1e";
+
+function mintS2sHeader(secret: string, unixSeconds = Math.floor(Date.now() / 1000)): string {
+  const message = `t=${unixSeconds}`;
+  return `${message},v1=${createHmac("sha256", secret).update(message).digest("hex")}`;
+}
 
 const MCP_HEADERS = {
   Accept: "application/json, text/event-stream",
   "Content-Type": "application/json",
+  "X-Gateway-S2S": mintS2sHeader(S2S_SECRET),
 };
 
 async function mcp(body: unknown, env: Env = {}): Promise<Response> {
@@ -21,7 +30,7 @@ async function mcp(body: unknown, env: Env = {}): Promise<Response> {
       headers: MCP_HEADERS,
       body: JSON.stringify(body),
     }),
-    env,
+    { CONDUIT_S2S_SECRET: S2S_SECRET, ...env },
   );
 }
 
@@ -32,13 +41,51 @@ describe("Cloudflare Worker entrypoint", () => {
     expect(await res.json()).toEqual({ status: "ok" });
   });
 
-  it("answers CORS preflight", async () => {
-    const res = await worker.fetch(
-      new Request("http://worker.local/mcp", { method: "OPTIONS" }),
-      {},
-    );
-    expect(res.status).toBe(204);
-    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+  it("does not send permissive CORS headers", async () => {
+    const res = await mcp({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
+  });
+
+  describe("S2S auth on /mcp", () => {
+    const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} });
+    const call = (headers: Record<string, string>, env: Env) =>
+      worker.fetch(
+        new Request("http://worker.local/mcp", {
+          method: "POST",
+          headers: { ...MCP_HEADERS, ...headers },
+          body,
+        }),
+        env,
+      );
+
+    it("rejects a request with no S2S header", async () => {
+      const res = await call({ "X-Gateway-S2S": "" }, { CONDUIT_S2S_SECRET: S2S_SECRET });
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects a header signed with the wrong secret", async () => {
+      const res = await call(
+        { "X-Gateway-S2S": mintS2sHeader("some-other-secret") },
+        { CONDUIT_S2S_SECRET: S2S_SECRET },
+      );
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects a stale header outside the skew window", async () => {
+      const stale = mintS2sHeader(S2S_SECRET, Math.floor(Date.now() / 1000) - 3600);
+      const res = await call({ "X-Gateway-S2S": stale }, { CONDUIT_S2S_SECRET: S2S_SECRET });
+      expect(res.status).toBe(401);
+    });
+
+    it("fails closed when CONDUIT_S2S_SECRET is not configured", async () => {
+      const res = await call({}, {});
+      expect(res.status).toBe(503);
+    });
+
+    it("keeps /health unauthenticated", async () => {
+      const res = await worker.fetch(new Request("http://worker.local/health"), {});
+      expect(res.status).toBe(200);
+    });
   });
 
   it("404s unknown paths", async () => {
@@ -129,7 +176,7 @@ describe("Cloudflare Worker entrypoint", () => {
           params: {},
         }),
       }),
-      { AUTH_MODE: "gateway" },
+      { AUTH_MODE: "gateway", CONDUIT_S2S_SECRET: S2S_SECRET },
     );
     expect(res.status).toBe(400);
   });
